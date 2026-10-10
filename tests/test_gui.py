@@ -32,14 +32,6 @@ def gui(tmp_path, monkeypatch):
     _dummy_company(con)
     ctx = Ctx(con)
     yield app, ctx, log, monkeypatch, tmp_path
-    # Fenster und Dialoge ohne Elternfenster jetzt abräumen: bleiben sie bis zum Interpreter-Ende liegen,
-    # stürzt PySide6 ab 6.12 beim Beenden ab (Exit-Code ≠ 0 trotz bestandener Tests)
-    from PySide6.QtCore import QCoreApplication, QEvent
-    for w in QApplication.topLevelWidgets():
-        w.close()
-        w.deleteLater()
-    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
-    app.processEvents()
     con.close()
 
 

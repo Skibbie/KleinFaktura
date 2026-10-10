@@ -1,4 +1,5 @@
-PySide6>=6.6
+# < 6.12: PySide6 6.12.0 stürzt beim Beenden des Interpreters ab (Tests mit Exit-Code ≠ 0)
+PySide6>=6.6,<6.12
 pyodbc>=5.0
 reportlab>=4.0
 factur-x>=3.0
