@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Version prüfen
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart("v")
+          $app = (Select-String -Path app/config.py -Pattern 'APP_VERSION = "(.+)"').Matches[0].Groups[1].Value
+          if ($tag -ne $app) { throw "Tag v$tag passt nicht zu APP_VERSION $app in app/config.py" }
+          "VERSION=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - run: python -m pip install -r requirements.txt pyinstaller
+
+      - name: Tests
+        run: python -m pytest -q tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Startbild erzeugen
+        run: python tools/make_splash.py
+
+      - name: Exe bauen
+        run: >
+          python -m PyInstaller --noconfirm --windowed --name KleinFaktura --icon assets\icon.ico --splash build\splash.png
+          --add-data "assets;assets" --add-data "app\db\schema.sql;app\db" --add-data "docs;docs"
+          --collect-data facturx --collect-data iso4217 --collect-data stdnum main.py
+
+      - name: Installer bauen
+        run: |
+          Copy-Item CHANGELOG.md, LICENSE, README.md dist/KleinFaktura/
+          choco install innosetup --no-progress -y
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Qp "/DAppVersion=$env:VERSION" installer\KleinFaktura.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup fehlgeschlagen" }
+
+      - name: ZIP und Release-Text
+        run: |
+          Compress-Archive -Path dist/KleinFaktura -DestinationPath "KleinFaktura-$env:VERSION.zip"
+          $lines = Get-Content CHANGELOG.md -Encoding utf8
+          $start = ($lines | Select-String -Pattern "^## \[$([regex]::Escape($env:VERSION))\]").LineNumber
+          if (-not $start) { throw "Kein Abschnitt ## [$env:VERSION] in CHANGELOG.md" }
+          $rest = $lines[$start..($lines.Count - 1)]
+          $end = ($rest | Select-String -Pattern "^## \[" | Select-Object -First 1).LineNumber
+          $body = if ($end) { $rest[0..($end - 2)] } else { $rest }
+          $body | Out-File notes.md -Encoding utf8
+
+      - name: Release anlegen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" "dist/KleinFaktura-Setup-$env:VERSION.exe" "KleinFaktura-$env:VERSION.zip" --title "KleinFaktura $env:VERSION" --notes-file notes.md

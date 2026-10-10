@@ -1,0 +1,50 @@
+name: Fehler
+description: Etwas funktioniert nicht wie erwartet
+title: "[Fehler] "
+labels: ["fehler"]
+body:
+  - type: markdown
+    attributes:
+      value: "Bitte keine Kundendaten, Rechnungen oder Screenshots mit Namen/Adressen anhängen."
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: steht in der Titelleiste, z.B. 1.0.0
+    validations:
+      required: true
+  - type: input
+    id: bereich
+    attributes:
+      label: Bereich
+      placeholder: z.B. Rechnungen, Fahrten, EÜR-Werte
+  - type: textarea
+    id: schritte
+    attributes:
+      label: Was hast du gemacht?
+      placeholder: "1. Fahrten öffnen\n2. Neue Fahrt\n3. …"
+    validations:
+      required: true
+  - type: textarea
+    id: erwartet
+    attributes:
+      label: Was hast du erwartet?
+    validations:
+      required: true
+  - type: textarea
+    id: passiert
+    attributes:
+      label: Was ist passiert?
+      description: Fehlermeldung im Wortlaut. Technische Details stehen ggf. in %LOCALAPPDATA%\KleinFaktura\fehler.log
+    validations:
+      required: true
+  - type: dropdown
+    id: dringend
+    attributes:
+      label: Wie dringend?
+      options:
+        - Blockiert die Arbeit (z.B. Rechnung nicht möglich)
+        - Störend, es gibt einen Umweg
+        - Kleinigkeit
+    validations:
+      required: true

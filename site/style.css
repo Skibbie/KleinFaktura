@@ -1,0 +1,42 @@
+:root {
+  --ground: #EEF2F1; --surface: #FFFFFF; --ink: #1D2B2F; --ink-2: #5A6A6E; --line: #CFD9D6;
+  --action: #17604A; --action-hover: #0F4D3B; --tint: #DCEBE5;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --ground: #131A1C; --surface: #1B2427; --ink: #E4ECEA; --ink-2: #9FB0AD; --line: #2D3A3D;
+          --action: #2E8A6C; --action-hover: #3AA07F; --tint: #1E3A31; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--ground); color: var(--ink);
+       font: 16px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif; }
+a { color: var(--action); }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+.top { display: flex; align-items: center; justify-content: space-between; padding-top: 20px; padding-bottom: 20px;
+       flex-wrap: wrap; gap: 12px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.25rem; color: var(--ink);
+         text-decoration: none; }
+nav a { margin-left: 20px; color: var(--ink-2); text-decoration: none; }
+nav a:first-child { margin-left: 0; }
+nav a:hover { color: var(--ink); }
+.hero { padding-top: 56px; padding-bottom: 56px; }
+h1 { font-size: clamp(2rem, 5vw, 3.2rem); line-height: 1.15; margin: 0 0 20px; letter-spacing: -0.01em; }
+h2 { font-size: 1.6rem; margin: 48px 0 20px; }
+h3 { font-size: 1.05rem; margin: 0 0 6px; }
+.lead { font-size: 1.15rem; color: var(--ink-2); max-width: 680px; margin: 0 0 28px; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 14px; }
+.btn { display: inline-block; padding: 11px 20px; border-radius: 8px; border: 1px solid var(--line);
+       background: var(--surface); color: var(--ink); text-decoration: none; font-weight: 600; }
+.btn.primary { background: var(--action); border-color: var(--action); color: #fff; }
+.btn.primary:hover { background: var(--action-hover); }
+.fine { color: var(--ink-2); font-size: 0.9rem; margin: 0; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.grid article { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+.grid p { margin: 0; color: var(--ink-2); font-size: 0.95rem; }
+.steps { padding-left: 22px; }
+.steps li { margin-bottom: 8px; }
+code { background: var(--tint); padding: 1px 6px; border-radius: 4px; font-size: 0.9em; }
+.note p { background: var(--tint); border-radius: 10px; padding: 16px 20px; margin: 0; }
+.foot { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; color: var(--ink-2);
+        font-size: 0.9rem; padding-top: 48px; padding-bottom: 32px; margin-top: 48px; border-top: 1px solid var(--line); }
+.legal { max-width: 760px; padding-bottom: 40px; }
+.todo { background: #FFF4CC; color: #5A4500; padding: 2px 6px; border-radius: 4px; }

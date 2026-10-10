@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+*.spec
+*.zip
+
+# Niemals Daten ins Repository
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+fehler.log
+archiv/

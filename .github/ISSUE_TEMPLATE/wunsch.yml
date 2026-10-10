@@ -1,0 +1,28 @@
+name: Wunsch
+description: Neue Funktion oder Verbesserung
+title: "[Wunsch] "
+labels: ["wunsch"]
+body:
+  - type: input
+    id: bereich
+    attributes:
+      label: Bereich
+      placeholder: z.B. Angebote, Ausgaben, Export
+  - type: textarea
+    id: wunsch
+    attributes:
+      label: Was soll das Programm können?
+    validations:
+      required: true
+  - type: textarea
+    id: warum
+    attributes:
+      label: Wofür brauchst du das?
+      description: Der Anlass hilft, die beste Lösung zu finden.
+  - type: dropdown
+    id: wichtig
+    attributes:
+      label: Wie wichtig?
+      options:
+        - Wichtig für die nächste Version
+        - Gerne irgendwann
