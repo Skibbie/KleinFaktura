@@ -1,9 +1,9 @@
 # Installiert oder aktualisiert KleinFaktura aus dem neuesten (oder angegebenen) GitHub-Release.
 # Aufruf:  powershell -ExecutionPolicy Bypass -File tools\install_release.ps1 [-Version 2.0.0]
 # Keine Anmeldung noetig (oeffentliches Repository).
-# Umstieg von EEE-Faktura: dessen Datenordner wird automatisch weiterbenutzt; die alte Desktop-Verknuepfung wird
-# entfernt, damit nicht zwei Programme mit derselben Datenbank arbeiten. Den alten Programmordner erst nach dem
-# ersten Start von KleinFaktura loeschen (das Logo wird beim ersten Start von dort uebernommen).
+# Umstieg von EEE-Faktura: dessen Datenordner wird automatisch weiterbenutzt; die alten Verknuepfungen (Desktop,
+# Startmenue) werden entfernt, damit nicht zwei Programme mit derselben Datenbank arbeiten. Den alten
+# Programmordner erst nach dem ersten Start von KleinFaktura loeschen (das Logo wird von dort uebernommen).
 param([string]$Version = "", [string]$Repo = "Skibbie/KleinFaktura")
 
 $ErrorActionPreference = "Stop"
@@ -40,10 +40,12 @@ if (Test-Path $target) {
 Move-Item (Join-Path $tmp $App) $target
 
 $desktop = [Environment]::GetFolderPath("Desktop")
-$legacyLnk = Join-Path $desktop "EEE-Faktura.lnk"
-if (Test-Path $legacyLnk) {
-    Remove-Item $legacyLnk
-    Write-Host "Alte Verknuepfung EEE-Faktura entfernt."
+$startMenu = [Environment]::GetFolderPath("Programs")
+foreach ($legacyLnk in @((Join-Path $desktop "EEE-Faktura.lnk"), (Join-Path $startMenu "EEE-Faktura.lnk"))) {
+    if (Test-Path $legacyLnk) {
+        Remove-Item $legacyLnk
+        Write-Host "Alte Verknuepfung entfernt: $legacyLnk"
+    }
 }
 $exe = Join-Path $target "$App.exe"
 $shell = New-Object -ComObject WScript.Shell

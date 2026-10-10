@@ -46,8 +46,9 @@ Name: "desktopicon"; Description: "Verknüpfung auf dem Desktop anlegen"; GroupD
 [InstallDelete]
 ; Programmdateien der Vorversion entfernen (alte Bibliotheken dürfen nicht liegen bleiben)
 Type: filesandordirs; Name: "{app}\_internal"
-; Umstieg von EEE-Faktura: alte Verknüpfung entfernen, damit nicht zwei Programme dieselbe Datenbank nutzen
+; Umstieg von EEE-Faktura: alte Verknüpfungen entfernen, damit nicht zwei Programme dieselbe Datenbank nutzen
 Type: files; Name: "{userdesktop}\EEE-Faktura.lnk"
+Type: files; Name: "{userprograms}\EEE-Faktura.lnk"
 
 [Files]
 Source: "..\dist\{#AppName}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
