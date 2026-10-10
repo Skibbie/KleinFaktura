@@ -9,7 +9,7 @@ Fahrtennachweis, GoBD-Unterstützung, E-Rechnung (ZUGFeRD) und GiroCode. Alle Da
 > bereitgestellt (siehe [LICENSE](LICENSE)).
 
 ## Installation
-1. Unter [Releases](https://github.com/Skibbie/kleinfaktura/releases) das neueste `KleinFaktura-Setup-x.y.z.exe`
+1. Unter [Releases](https://github.com/Skibbie/KleinFaktura/releases) das neueste `KleinFaktura-Setup-x.y.z.exe`
    herunterladen und starten. Es sind keine Administratorrechte nötig; installiert wird nach
    `%LOCALAPPDATA%\Programs\KleinFaktura\` mit Eintrag im Startmenü (Desktop-Verknüpfung optional).
    Da der Installer nicht signiert ist, zeigt Windows SmartScreen beim ersten Mal ggf. eine Warnung

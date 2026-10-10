@@ -25,7 +25,7 @@ from pathlib import Path
 
 from app import config
 
-REPO = "Skibbie/kleinfaktura"
+REPO = "Skibbie/KleinFaktura"
 API = f"https://api.github.com/repos/{REPO}"
 EXE_NAME = f"{config.APP_NAME}.exe"
 ZIP_PREFIX = f"{config.APP_NAME}/"  # Ordner im Release-ZIP

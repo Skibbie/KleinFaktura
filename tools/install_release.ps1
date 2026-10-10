@@ -4,7 +4,7 @@
 # Umstieg von EEE-Faktura: dessen Datenordner wird automatisch weiterbenutzt; die alte Desktop-Verknuepfung wird
 # entfernt, damit nicht zwei Programme mit derselben Datenbank arbeiten. Den alten Programmordner erst nach dem
 # ersten Start von KleinFaktura loeschen (das Logo wird beim ersten Start von dort uebernommen).
-param([string]$Version = "", [string]$Repo = "Skibbie/kleinfaktura")
+param([string]$Version = "", [string]$Repo = "Skibbie/KleinFaktura")
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"   # Invoke-WebRequest ist mit Fortschrittsanzeige sehr langsam
