@@ -18,7 +18,8 @@ Screenshots mit personenbezogenen Daten anhängen. Geplante Punkte werden einem 
 2. `app/config.py`: `APP_VERSION = "X.Y.Z"`.
 3. Bei Änderungen an `schema.sql`: `SCHEMA_VERSION` in `app/db/database.py` erhöhen, Umbau so schreiben,
    dass bestehende Daten erhalten bleiben (nur `CREATE … IF NOT EXISTS`, `ALTER TABLE … ADD COLUMN`).
-4. Commit auf `main`, dann `git tag vX.Y.Z` und `git push --follow-tags`.
+4. Commit auf `main`, dann `git tag -a vX.Y.Z -m "KleinFaktura X.Y.Z"` und `git push --follow-tags`
+   (`--follow-tags` überträgt nur Tags mit `-a`; ein einfacher Tag braucht `git push origin vX.Y.Z`).
 5. GitHub Actions testet, baut `KleinFaktura-Setup-X.Y.Z.exe` (Inno Setup, `installer/KleinFaktura.iss`) und
    `KleinFaktura-X.Y.Z.zip` und legt das Release mit dem Changelog-Abschnitt an.
    Der Workflow bricht ab, wenn Tag und `APP_VERSION` nicht übereinstimmen.
