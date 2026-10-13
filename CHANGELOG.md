@@ -5,6 +5,8 @@ automatisch als Beschreibung übernommen. Neue Einträge zuerst unter `## [Unver
 
 ## [Unveröffentlicht]
 
+## [2.1.0] – 2026-10-13
+
 - Rechnungen und Angebote per E-Mail: Der Button „Per E-Mail“ sitzt in der Belegliste und im
   festgeschriebenen Beleg, außerdem wird der Versand direkt nach dem Festschreiben angeboten. Er öffnet
   Thunderbird mit Empfänger, Betreff, Text und dem PDF als Anhang. Gesendet wird erst in Thunderbird. Betreff

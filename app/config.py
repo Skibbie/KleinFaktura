@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 APP_NAME = "KleinFaktura"
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 # Frühere Programmnamen: deren Datenverzeichnis wird weiterverwendet, solange es noch kein eigenes gibt
 LEGACY_NAMES = ["EEE-Faktura"]
 DB_FILE = "faktura.sqlite3"
