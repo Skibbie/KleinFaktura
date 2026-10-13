@@ -6,11 +6,11 @@ from datetime import date
 from PySide6.QtCore import Qt
 
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-                               QLineEdit, QMessageBox, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
+                               QLineEdit, QMessageBox, QPlainTextEdit, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
 
 from app import config
 from app.db.database import PROFILES, apply_profile, get_setting, set_setting, transaction
-from app.services import audit, numbering
+from app.services import audit, mail, numbering
 from app.ui import update_ui
 from app.ui.common import CANCEL, SAVE, Ctx, ask_save, button, confirm, error, hbox, page_title
 
@@ -39,6 +39,8 @@ class SettingsPage(QWidget):
         scroll.setWidget(body)
         outer.addWidget(scroll)
         self.edits: dict[str, QLineEdit] = {}
+        self.texts: dict[str, QPlainTextEdit] = {}
+        self.checks: dict[str, QCheckBox] = {}
 
         g = QGroupBox("Firma (Absender, Pflichtangaben § 14 UStG)")
         f = QFormLayout(g)
@@ -94,6 +96,35 @@ class SettingsPage(QWidget):
         self.zugferd.setChecked(get_setting(ctx.con, "invoice.zugferd_default") == "1")
         f.addRow("", self.girocode)
         f.addRow("", self.zugferd)
+        lay.addWidget(g)
+
+        g = QGroupBox("E-Mail & PDF-Ablage")
+        f = QFormLayout(g)
+        self.edits["mail.thunderbird_path"] = QLineEdit(get_setting(ctx.con, "mail.thunderbird_path"))
+        found = mail.find_thunderbird(ctx.con) if not get_setting(ctx.con, "mail.thunderbird_path") else None
+        self.edits["mail.thunderbird_path"].setPlaceholderText(f"automatisch: {found}" if found else "nicht gefunden – bitte wählen")
+        f.addRow("Thunderbird", hbox(self.edits["mail.thunderbird_path"], button("…", self.pick_thunderbird)))
+        for key, label in [("mail.subject_rechnung", "Betreff Rechnung"), ("mail.subject_angebot", "Betreff Angebot")]:
+            self.edits[key] = QLineEdit(get_setting(ctx.con, key))
+            f.addRow(label, self.edits[key])
+        for key, label in [("mail.body_rechnung", "Text Rechnung"), ("mail.body_angebot", "Text Angebot")]:
+            t = QPlainTextEdit(get_setting(ctx.con, key))
+            t.setFixedHeight(150)
+            self.texts[key] = t
+            f.addRow(label, t)
+        ph = QLabel("Platzhalter: {briefanrede} {belegart} {belegnr} {datum} {betrag} {faellig} {gueltig_bis} "
+                    "{betreff} {projekt} {objekt_adresse} {kunde} {inhaber} {firma}. Die Mail wird nur vorbereitet – "
+                    "gesendet wird erst in Thunderbird.")
+        ph.setWordWrap(True)
+        f.addRow(ph)
+        self.checks["pdf.export_auto"] = QCheckBox("PDF nach dem Festschreiben zusätzlich in diesen Ordner kopieren")
+        self.checks["pdf.export_year_dirs"] = QCheckBox("Unterordner je Jahr anlegen")
+        f.addRow("", self.checks["pdf.export_auto"])
+        self.edits["pdf.export_dir"] = QLineEdit(get_setting(ctx.con, "pdf.export_dir"))
+        f.addRow("PDF-Ordner", hbox(self.edits["pdf.export_dir"], button("…", self.pick_export_dir)))
+        f.addRow("", self.checks["pdf.export_year_dirs"])
+        for key, cb in self.checks.items():
+            cb.setChecked(get_setting(ctx.con, key) == "1")
         lay.addWidget(g)
 
         g = QGroupBox("Nummernkreise")
@@ -180,12 +211,17 @@ class SettingsPage(QWidget):
         self._clean = self._snapshot()
 
     def _snapshot(self):
-        return ({k: e.text() for k, e in self.edits.items()}, self.profile.currentIndex(), self.tax_mode.currentIndex(), self.ku_basis.currentIndex(),
+        return ({k: e.text() for k, e in self.edits.items()}, {k: t.toPlainText() for k, t in self.texts.items()},
+                {k: c.isChecked() for k, c in self.checks.items()}, self.profile.currentIndex(), self.tax_mode.currentIndex(), self.ku_basis.currentIndex(),
                 self.girocode.isChecked(), self.zugferd.isChecked(), self.update_check.isChecked())
 
     def _reload_values(self):
         for key, e in self.edits.items():
             e.setText(get_setting(self.ctx.con, key))
+        for key, t in self.texts.items():
+            t.setPlainText(get_setting(self.ctx.con, key))
+        for key, c in self.checks.items():
+            c.setChecked(get_setting(self.ctx.con, key) == "1")
         self.profile.setCurrentIndex(max(0, self.profile.findData(get_setting(self.ctx.con, "profile"))))
         self.tax_mode.setCurrentIndex(0 if get_setting(self.ctx.con, "tax.mode") == "kleinunternehmer" else 1)
         self.ku_basis.setCurrentIndex(0 if get_setting(self.ctx.con, "ku.basis") == "ist" else 1)
@@ -214,6 +250,17 @@ class SettingsPage(QWidget):
         if p:
             self.edits["company.logo"].setText(p)
 
+    def pick_thunderbird(self):
+        p, _ = QFileDialog.getOpenFileName(self, "thunderbird.exe wählen", self.edits["mail.thunderbird_path"].text(),
+                                           "Programme (*.exe)")
+        if p:
+            self.edits["mail.thunderbird_path"].setText(p)
+
+    def pick_export_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "Ordner für PDF-Kopien wählen", self.edits["pdf.export_dir"].text())
+        if d:
+            self.edits["pdf.export_dir"].setText(d)
+
     def pick_backup_dir(self):
         d = QFileDialog.getExistingDirectory(self, "Sicherungsordner wählen", self.edits["backup.dir"].text())
         if d:
@@ -227,7 +274,9 @@ class SettingsPage(QWidget):
                 if v != get_setting(self.ctx.con, key):
                     changes[key] = v
                 set_setting(self.ctx.con, key, v)
-            for key, v in [("tax.mode", self.tax_mode.currentData()), ("ku.basis", self.ku_basis.currentData()),
+            values = [(k, t.toPlainText().strip()) for k, t in self.texts.items()]
+            values += [(k, "1" if c.isChecked() else "0") for k, c in self.checks.items()]
+            for key, v in values + [("tax.mode", self.tax_mode.currentData()), ("ku.basis", self.ku_basis.currentData()),
                            ("invoice.girocode", "1" if self.girocode.isChecked() else "0"),
                            ("invoice.zugferd_default", "1" if self.zugferd.isChecked() else "0"),
                            (update_ui.CHECK_SETTING, "1" if self.update_check.isChecked() else "0")]:

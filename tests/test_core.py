@@ -554,3 +554,52 @@ def test_notes(con):
     assert repo.get_customer(con, cid)["active"] == 0
     notes.delete_note(con, n1)
     assert notes.get_note(con, n1) is None
+
+
+# ------------------------------------------------------------------ E-Mail / PDF-Ablage
+def test_mail_compose_and_export(con, tmp_path, monkeypatch):
+    from app.db.database import set_setting
+    from app.services import documents, mail
+    cid = _customer(con, email="erika@example.org", last_name="D'Angelo")
+    did = _invoice(con, cid, on="2026-10-01")
+    draft = documents.get_document(con, did)
+    with pytest.raises(mail.MailError):
+        mail.open_compose(con, draft)
+    assert mail.export_copy(con, draft) is None
+    doc = documents.finalize(con, did, pdf_writer=_fake_pdf)
+
+    # Argument: Kommas und Zeilenumbrüche bleiben, ' wird typografisch, Anhang als file-URL (Leerzeichen kodiert)
+    arg = mail.compose_arg("a@b.de", "Rechnung 1, Test", "Hallo D'Angelo,\nZeile 2", Path(tmp_path / "mit leer.pdf"))
+    assert "body='Hallo D’Angelo,\nZeile 2'" in arg and "subject='Rechnung 1, Test'" in arg
+    assert arg.endswith("mit%20leer.pdf'") and "attachment='file:///" in arg
+
+    to, subject, body = mail.mail_texts(con, doc)
+    assert to == "erika@example.org" and subject == "Rechnung 2026-1001 vom 01.10.2026"
+    assert "Rechnung 2026-1001" in body and "D'Angelo" in body and "Max Muster" in body
+
+    exe = tmp_path / "thunderbird.exe"
+    exe.write_bytes(b"")
+    set_setting(con, "mail.thunderbird_path", str(exe))
+    launched = []
+    monkeypatch.setattr(mail, "_launch", launched.append)
+    assert mail.open_compose(con, doc) == "erika@example.org"
+    args = launched[0]
+    assert args[0] == str(exe) and args[1] == "-compose" and Path(doc["pdf_path"]).name.replace(" ", "%20") in args[2]
+    assert "D’Angelo" in args[2] and "D'Angelo" not in args[2]
+    assert con.execute("SELECT COUNT(*) FROM audit_log WHERE action='mail'").fetchone()[0] == 1
+    set_setting(con, "mail.thunderbird_path", str(tmp_path / "fehlt.exe"))
+    with pytest.raises(mail.MailError):
+        mail.open_compose(con, doc)
+
+    # PDF-Kopie: nur wenn eingeschaltet; Kopie ist beschreibbar und darf überschrieben werden
+    out = tmp_path / "Rechnungen"
+    set_setting(con, "pdf.export_dir", str(out))
+    assert mail.export_copy(con, doc) is None
+    set_setting(con, "pdf.export_auto", "1")
+    target = mail.export_copy(con, doc)
+    assert target == out / "2026" / Path(doc["pdf_path"]).name
+    assert target.read_bytes() == Path(doc["pdf_path"]).read_bytes()
+    assert os.access(target, os.W_OK)
+    assert mail.export_copy(con, doc) == target
+    set_setting(con, "pdf.export_year_dirs", "0")
+    assert mail.export_copy(con, doc) == out / Path(doc["pdf_path"]).name

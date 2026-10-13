@@ -11,6 +11,7 @@ from app.money import fmt_date, fmt_eur
 from app.services import documents, payments
 from app.ui.common import (STATUS_COLORS, Ctx, button, confirm, date_edit, date_value, error, hbox, item, make_table,
                            open_file, page_title, selected_data)
+from app.ui.mail_ui import export_after_finalize, send_mail
 
 
 class PaymentDialog(QDialog):
@@ -111,6 +112,7 @@ class DocumentsPage(QWidget):
 
         new_label = "Neues Angebot" if kind == "angebot" else "Neue Rechnung"
         btns = [button(new_label, self.new, primary=True), button("Öffnen", self.open), button("PDF", self.pdf),
+                button("Per E-Mail", self.mail, tooltip="Thunderbird mit vorbereiteter Mail und PDF-Anhang öffnen"),
                 button("Kopieren", self.copy)]
         if kind == "angebot":
             btns.append(button("In Rechnung umwandeln", self.convert))
@@ -195,6 +197,11 @@ class DocumentsPage(QWidget):
         else:
             QMessageBox.information(self, "PDF", "Entwürfe haben noch kein Archiv-PDF – bitte im Editor „Vorschau“ nutzen.")
 
+    def mail(self):
+        did = self._sel()
+        if did:
+            send_mail(self, self.ctx, documents.get_document(self.ctx.con, did))
+
     def copy(self):
         did = self._sel()
         if did:
@@ -247,8 +254,9 @@ class DocumentsPage(QWidget):
             error(self, "Storno fehlgeschlagen", e)
             return
         self.ctx.changed()
+        copied = export_after_finalize(self, self.ctx, s)
         QMessageBox.information(self, "Storniert", f"Stornorechnung {s['number']} wurde erstellt.\n"
-                                "Bei Bedarf jetzt eine korrigierte Rechnung über „Kopieren“ anlegen.")
+                                "Bei Bedarf jetzt eine korrigierte Rechnung über „Kopieren“ anlegen." + copied)
         open_file(s["pdf_path"])
 
     def delete(self):

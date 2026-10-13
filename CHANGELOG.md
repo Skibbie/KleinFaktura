@@ -5,6 +5,14 @@ automatisch als Beschreibung übernommen. Neue Einträge zuerst unter `## [Unver
 
 ## [Unveröffentlicht]
 
+- Rechnungen und Angebote per E-Mail: Der Button „Per E-Mail“ sitzt in der Belegliste und im
+  festgeschriebenen Beleg, außerdem wird der Versand direkt nach dem Festschreiben angeboten. Er öffnet
+  Thunderbird mit Empfänger, Betreff, Text und dem PDF als Anhang. Gesendet wird erst in Thunderbird. Betreff
+  und Text sind unter Einstellungen → E-Mail & PDF-Ablage als Vorlagen mit Platzhaltern einstellbar.
+  Thunderbird wird automatisch gefunden oder kann dort gewählt werden
+- PDF automatisch an einen Wunschort: Nach dem Festschreiben (auch bei Stornos) wird auf Wunsch eine Kopie des
+  PDFs in einen frei gewählten Ordner gelegt, optional mit Unterordner je Jahr. Das Archiv bleibt unverändert
+
 ## [2.0.0] – 2026-10-10
 
 Erste öffentliche Version (MIT-Lizenz).

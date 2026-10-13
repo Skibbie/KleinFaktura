@@ -24,6 +24,10 @@ def gui(tmp_path, monkeypatch):
         monkeypatch.setattr(QMessageBox, name, staticmethod(lambda *a, _n=name, **k: log.append((_n, a[2] if len(a) > 2 else "")) or QMessageBox.Yes))
     monkeypatch.setattr(QInputDialog, "getItem", staticmethod(lambda p, t, l, items, cur=0, *a, **k: (items[cur], True)))
     monkeypatch.setattr(os, "startfile", lambda *a, **k: None, raising=False)
+    from app.ui import editor as _editor
+    monkeypatch.setattr(_editor, "ask_send_after_finalize", lambda p, text: log.append(("information", text)) or False)
+    from app.services import mail as _mail
+    monkeypatch.setattr(_mail, "_launch", lambda args: log.append(("mail", args)))
     from app.db import database
     from app.ui.common import Ctx
     con = database.connect()
@@ -577,3 +581,41 @@ def test_setup_wizard_on_first_start(gui):
     win.run_setup()
     assert win.nav.currentRow() == win.page_index("einstellungen") and log
     win.close()
+
+
+def test_mail_and_pdf_export(gui):
+    app, ctx, log, mp, tmp = gui
+    from app.db.database import get_setting
+    from app.services import documents
+    from app.ui.documents_page import DocumentsPage
+    from app.ui.editor import DocumentEditor
+    from app.ui.settings_page import SettingsPage
+    from test_core import _customer
+
+    exe = tmp / "thunderbird.exe"
+    exe.write_bytes(b"")
+    sp = SettingsPage(ctx)
+    sp.edits["mail.thunderbird_path"].setText(str(exe))
+    sp.edits["pdf.export_dir"].setText(str(tmp / "ablage"))
+    sp.checks["pdf.export_auto"].setChecked(True)
+    sp.texts["mail.body_rechnung"].setPlainText("Hallo {kunde}, anbei {belegnr}.")
+    assert sp._snapshot() != sp._clean
+    sp.save(quiet=True)
+    assert sp._snapshot() == sp._clean
+    assert get_setting(ctx.con, "pdf.export_auto") == "1" and get_setting(ctx.con, "mail.body_rechnung").startswith("Hallo")
+
+    cid = _customer(ctx.con, email="erika@example.org")
+    ed = DocumentEditor(None, ctx, doc_type="rechnung", customer_id=cid)
+    ed.table.item(0, 0).setText("Beratung")
+    ed.table.item(0, 1).setText("1")
+    ed.table.item(0, 3).setText("100,00")
+    ed.finalize()
+    inv = documents.list_documents(ctx.con, ("rechnung",))[0]
+    assert (tmp / "ablage" / inv["doc_date"][:4] / f"Rechnung-{inv['number']}.pdf").exists()
+    assert any(n == "information" and "Kopie gespeichert" in t for n, t in log)
+
+    page = DocumentsPage(ctx, "rechnung")
+    page.table.selectRow(0)
+    page.mail()
+    args = [a for n, a in log if n == "mail"][-1]
+    assert args[1] == "-compose" and "to='erika@example.org'" in args[2] and f"anbei {inv['number']}." in args[2]

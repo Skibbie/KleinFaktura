@@ -64,6 +64,19 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "backup.keep_daily": "30",
     "backup.keep_monthly": "12",
     "backup.last": "",
+    # E-Mail-Versand über Thunderbird (Pfad leer = automatisch suchen)
+    "mail.thunderbird_path": "",
+    "mail.subject_rechnung": "{belegart} {belegnr} vom {datum}",
+    "mail.body_rechnung": "{briefanrede},\n\nanbei erhalten Sie die {belegart} {belegnr} vom {datum} über {betrag}.\n"
+                          "Bitte überweisen Sie den Betrag bis zum {faellig}.\n\nMit freundlichen Grüßen\n{inhaber}\n{firma}",
+    "mail.subject_angebot": "Angebot {belegnr} vom {datum}",
+    "mail.body_angebot": "{briefanrede},\n\nanbei erhalten Sie unser Angebot {belegnr} vom {datum}. "
+                         "Es ist gültig bis zum {gueltig_bis}.\n\nBei Fragen melden Sie sich gerne.\n\n"
+                         "Mit freundlichen Grüßen\n{inhaber}\n{firma}",
+    # PDF-Kopie nach dem Festschreiben in einen eigenen Ordner (zusätzlich zum Archiv)
+    "pdf.export_auto": "0",
+    "pdf.export_dir": "",
+    "pdf.export_year_dirs": "1",
     # Ausgaben
     "expense.km_rate": "0,30",
     # Textbausteine: Haken „In Textbausteine übernehmen“ unter Eingabefeldern standardmäßig gesetzt

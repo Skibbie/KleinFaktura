@@ -40,6 +40,7 @@ Beim ersten Wählen eines Profils kommen dessen Startwerte dazu. Ein Wechsel lö
 | Kunden | manuell anlegen/bearbeiten, Projekte/Objektadressen je Kunde, Import aus CSV/Excel (bei Energieberatung zusätzlich aus Hottgenroth, nur lesend) – mit Kollisionsdialog (Feldvergleich, lokal behalten / übernehmen / zusammenführen / neu / überspringen) |
 | Angebote | `ANJJJJ-MMNN`, Gültigkeit, „In Rechnung umwandeln“ |
 | Rechnungen | `JJJJ-MMNN` (Zähler je Monat), Nummer erst beim Festschreiben, Pflichtangabenprüfung § 14 UStG, PDF mit eigenem Logo, GiroCode, optional ZUGFeRD (EN 16931, PDF/A-3) |
+| Versand & Ablage | „Per E-Mail“ öffnet Thunderbird mit vorbereiteter Mail (Empfänger aus dem Kunden, Betreff und Text als Vorlage) und dem PDF als Anhang – gesendet wird erst in Thunderbird; optional nach dem Festschreiben eine PDF-Kopie in einen Wunschordner (auf Wunsch je Jahr) |
 | Storno | Stornorechnung mit eigener Nummer und Verweis; festgeschriebene Belege sind unveränderbar |
 | Offene Posten | Teilzahlungen, Überfälligkeit, Zahlungserinnerung / 1. / 2. Mahnung mit Gebühren und GiroCode |
 | Altbelege | Import bestehender Rechnungen aus .ods / .xlsx / .pdf, Prüfdialog, Nummernreservierung, Dubletten- und Kollisionsprüfung |
@@ -59,7 +60,7 @@ Beim ersten Wählen eines Profils kommen dessen Startwerte dazu. Ein Wechsel lö
 ## Platzhalter in Texten
 `{briefanrede} {kunde} {faellig} {zahlungsziel} {iban} {bic} {belegnr} {betrag} {gueltig_bis} {datum}
 {leistungsdatum} {inhaber} {firma} {objekt_adresse} {projekt} {ref_belegnr} {ref_datum}` –
-in Mahnungen zusätzlich `{offen} {gebuehr} {gesamt} {neu_faellig} {rechnungsnr} {rechnungsdatum}`.
+in E-Mail-Vorlagen zusätzlich `{belegart} {betreff}`, in Mahnungen zusätzlich `{offen} {gebuehr} {gesamt} {neu_faellig} {rechnungsnr} {rechnungsdatum}`.
 
 ## Hinweise
 - Die Software ist GoBD-*unterstützend*. Die Ordnungsmäßigkeit hängt vom gelebten Verfahren ab

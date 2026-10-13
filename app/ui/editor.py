@@ -17,6 +17,7 @@ from app.money import fmt_eur, fmt_qty, line_total_cents, to_cents, to_decimal
 from app.services import documents, kleinunternehmer, numbering
 from app.ui.common import CANCEL, SAVE, Ctx, ask_save, button, confirm, date_edit, date_value, error, hbox, open_file, set_date
 from app.ui.customers import CustomerDialog, CustomerPicker, ProjectDialog
+from app.ui.mail_ui import ask_send_after_finalize, export_after_finalize, send_mail
 
 COL_TITLE, COL_QTY, COL_UNIT, COL_PRICE, COL_TAX, COL_TOTAL = range(6)
 UNITS = ["Stunden", "Stück", "pauschal", "km", "Tage", "m²", "Monate"]
@@ -259,6 +260,8 @@ class DocumentEditor(QDialog):
         self.actions.addWidget(button("Vorschau (PDF)", self.preview))
         if self.readonly:
             self.actions.addWidget(button("Archiv-PDF öffnen", lambda: open_file(self.doc.get("pdf_path") or self.doc.get("import_file_path"))))
+            self.actions.addWidget(button("Per E-Mail senden…", lambda: send_mail(self, self.ctx, self.doc),
+                                          tooltip="Thunderbird mit vorbereiteter Mail und PDF-Anhang öffnen"))
         if dt == "rechnung":
             trip_btn = button("Fahrt hinzufügen…", self.add_trip,
                               tooltip="Neue Fahrt mit Bezug zu dieser Rechnung erfassen" if self.readonly
@@ -607,8 +610,11 @@ class DocumentEditor(QDialog):
             error(self, "Festschreiben fehlgeschlagen", e)
             return
         self.ctx.changed()
-        QMessageBox.information(self, "Festgeschrieben", f"{label} {self.doc['number']} wurde festgeschrieben und archiviert.")
-        open_file(self.doc["pdf_path"])
+        copied = export_after_finalize(self, self.ctx, self.doc)
+        if ask_send_after_finalize(self, f"{label} {self.doc['number']} wurde festgeschrieben und archiviert.{copied}"):
+            send_mail(self, self.ctx, self.doc)
+        else:
+            open_file(self.doc["pdf_path"])
         self.accept()
 
     def add_trip(self):
