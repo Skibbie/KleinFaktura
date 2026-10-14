@@ -6,7 +6,8 @@ Fahrtennachweis, GoBD-Unterstützung, E-Rechnung (ZUGFeRD) und GiroCode. Alle Da
 
 > **Hinweis:** KleinFaktura ist keine Steuerberatung. Steuerliche Grenzwerte, Aufbewahrungsfristen, Kontenzuordnungen
 > und die Verfahrensdokumentation bitte mit dem Steuerberater abstimmen. Die Software wird ohne Gewährleistung
-> bereitgestellt (siehe [LICENSE](LICENSE)).
+> bereitgestellt (siehe [LICENSE](LICENSE)). Für die Richtigkeit der Belege, die Datensicherung und die Aufbewahrung
+> über die gesetzlichen Fristen sind Anwender selbst verantwortlich.
 
 ## Installation
 1. Unter [Releases](https://github.com/Skibbie/KleinFaktura/releases) das neueste `KleinFaktura-Setup-x.y.z.exe`

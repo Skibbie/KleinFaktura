@@ -11,10 +11,18 @@ import sys
 from pathlib import Path
 
 APP_NAME = "KleinFaktura"
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.2.1"
 # Frühere Programmnamen: deren Datenverzeichnis wird weiterverwendet, solange es noch kein eigenes gibt
 LEGACY_NAMES = ["EEE-Faktura"]
 DB_FILE = "faktura.sqlite3"
+
+# Hinweis zu Haftung und Verantwortung (Einrichtungsassistent, Einstellungen; gleicher Inhalt auf der Website)
+DISCLAIMER = (
+    "KleinFaktura ist keine Steuer- oder Rechtsberatung und wird kostenlos und ohne Gewährleistung bereitgestellt "
+    "(MIT-Lizenz). Die Software unterstützt die GoBD; ordnungsgemäß wird die Buchführung erst durch das gelebte "
+    "Verfahren. Für die Richtigkeit der Belege, die Datensicherung und die Aufbewahrung über die gesetzlichen Fristen "
+    "(für Rechnungen derzeit 8 Jahre) sind Sie selbst verantwortlich. Die Regelbesteuerung wird nur eingeschränkt "
+    "unterstützt. Steuerliche Fragen klären Sie bitte mit Ihrer Steuerberatung.")
 
 
 def _base_dir() -> Path:

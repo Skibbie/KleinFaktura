@@ -5,6 +5,12 @@ automatisch als Beschreibung übernommen. Neue Einträge zuerst unter `## [Unver
 
 ## [Unveröffentlicht]
 
+## [2.2.1] – 2026-10-14
+
+- Wichtiger Hinweis zu Haftung und Verantwortung (keine Steuerberatung, ohne Gewährleistung, Datensicherung und
+  Aufbewahrung liegen beim Anwender, Regelbesteuerung eingeschränkt) im Einrichtungsassistenten und unter
+  Einstellungen → Hinweise; Website und README entsprechend ergänzt
+
 ## [2.2.0] – 2026-10-14
 
 - Mahngebühren: Zahlt ein Kunde Rechnung plus Mahngebühr, gilt die Rechnung als bezahlt statt als überzahlt.

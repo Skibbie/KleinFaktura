@@ -102,6 +102,12 @@ class SetupWizard(QWizard):
                        "„Einstellungen“ ändern. Die Daten bleiben auf diesem PC.")
         intro.setWordWrap(True)
         lay.addWidget(intro)
+        note = QLabel(f"<b>Wichtiger Hinweis:</b> {config.DISCLAIMER}")
+        note.setWordWrap(True)
+        note.setObjectName("warn")
+        lay.addSpacing(12)
+        lay.addWidget(note)
+        lay.addWidget(QLabel("Den Hinweis finden Sie jederzeit unter Einstellungen → Hinweise."))
         self.addPage(start)
 
         self.addPage(_FormPage("Firmendaten", "Erscheinen als Absender auf allen Belegen (Pflichtangaben mit *).",

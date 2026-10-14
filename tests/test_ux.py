@@ -56,7 +56,7 @@ def test_settings_tabs_and_texts(gui):
     from app.ui.settings_page import SettingsPage
     sp = SettingsPage(ctx)
     assert [sp.tabs.tabText(i) for i in range(sp.tabs.count())] == \
-        ["Firma", "Steuer und Belege", "E-Mail und PDF", "Datensicherung", "Schnittstellen und Updates"]
+        ["Firma", "Steuer und Belege", "E-Mail und PDF", "Datensicherung", "Schnittstellen und Updates", "Hinweise"]
     euer = EuerPage(ctx)
     assert "Kleinunternehmer" in euer.intro.text() and " du " not in euer.intro.text()
     set_setting(ctx.con, "tax.mode", "regel")
@@ -70,3 +70,16 @@ def test_settings_tabs_and_texts(gui):
 def test_count_helper():
     from app.ui.common import count
     assert count(1, "Ausgabe", "Ausgaben") == "1 Ausgabe" and count(0, "Ausgabe", "Ausgaben") == "0 Ausgaben"
+
+
+def test_disclaimer_in_settings_and_wizard(gui):
+    app, ctx, log, mp, tmp = gui
+    from PySide6.QtWidgets import QLabel
+    from app import config
+    from app.ui.settings_page import SettingsPage
+    from app.ui.setup_wizard import SetupWizard
+    sp = SettingsPage(ctx)
+    assert sp.disclaimer.text() == config.DISCLAIMER
+    wiz = SetupWizard(None, ctx)
+    first = wiz.page(wiz.pageIds()[0])
+    assert any(config.DISCLAIMER in lbl.text() for lbl in first.findChildren(QLabel))

@@ -256,6 +256,18 @@ class SettingsPage(QWidget):
         f.addRow("", button("Jetzt nach Updates suchen", lambda: update_ui.check_now(self.window())))
         lay.addWidget(g)
 
+        lay = self._tab("Hinweise")
+        g = QGroupBox("Wichtiger Hinweis")
+        f = QVBoxLayout(g)
+        self.disclaimer = QLabel(config.DISCLAIMER)
+        self.disclaimer.setWordWrap(True)
+        f.addWidget(self.disclaimer)
+        about = QLabel(f"{config.APP_NAME} {config.APP_VERSION} · MIT-Lizenz · {update_ui.release_page()}")
+        about.setObjectName("muted")
+        about.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        f.addWidget(about)
+        lay.addWidget(g)
+
         for tab_lay in self._tab_layouts:
             tab_lay.addStretch(1)
         outer.addLayout(hbox(None, button("Einstellungen speichern", self.save, primary=True)))
