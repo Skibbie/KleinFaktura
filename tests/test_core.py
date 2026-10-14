@@ -168,7 +168,10 @@ def test_storno_and_open_items(con):
         con.execute("DELETE FROM payment")
     s = documents.create_storno(con, did, pdf_writer=_fake_pdf)
     assert s["number"] == "2026-1002" and s["total_gross_cents"] == -72000
-    assert payments.open_amount(con, did) == 0
+    assert payments.open_amount(con, did) == -20000          # Teilzahlung ist zu erstatten
+    assert [d["id"] for d in payments.open_items(con)] == [did] and payments.open_items(con)[0]["days_overdue"] == 0
+    payments.add_payment(con, did, "2026-10-20", "-200,00")   # Rückzahlung erfasst
+    assert payments.open_amount(con, did) == 0 and payments.open_items(con) == []
     assert documents.list_documents(con, ("rechnung",))[0]["status_label"] == "Storniert"
     with pytest.raises(ValueError):
         documents.create_storno(con, did, pdf_writer=_fake_pdf)

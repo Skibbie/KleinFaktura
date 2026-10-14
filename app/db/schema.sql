@@ -126,6 +126,7 @@ CREATE TABLE IF NOT EXISTS dunning (
     pdf_sha256   TEXT,
     created_at   TEXT DEFAULT (datetime('now','localtime'))
 );
+CREATE INDEX IF NOT EXISTS ix_dunning_doc ON dunning(document_id, level);
 
 CREATE TABLE IF NOT EXISTS textblock (
     id       INTEGER PRIMARY KEY,

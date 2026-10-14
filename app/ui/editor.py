@@ -1,8 +1,7 @@
 """Beleg-Editor für Angebote, Rechnungen und Stornorechnungen."""
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
+from datetime import datetime
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QFormLayout, QGridLayout,
@@ -12,14 +11,29 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
 
 from app import config
 from app.db import repo
-from app.db.database import get_setting
-from app.money import fmt_eur, fmt_qty, line_total_cents, to_cents, to_decimal
+from app.db.database import get_decimal_setting, get_int_setting, get_setting
+from app.money import fmt_eur, fmt_qty, input_cents, input_decimal, line_total_cents
 from app.services import documents, kleinunternehmer, numbering
 from app.ui.common import CANCEL, SAVE, Ctx, ask_save, button, confirm, date_edit, date_value, error, hbox, open_file, set_date
 from app.ui.customers import CustomerDialog, CustomerPicker, ProjectDialog
 from app.ui.mail_ui import ask_send_after_finalize, export_after_finalize, send_mail
 
 COL_TITLE, COL_QTY, COL_UNIT, COL_PRICE, COL_TAX, COL_TOTAL = range(6)
+
+
+def missing_glyph_warning(doc: dict, lines: list[dict]) -> list[str]:
+    """Hinweis auf Zeichen (z.B. Emojis), die im archivierten PDF als leere Kästchen erschienen."""
+    from app.output.pdf_invoice import missing_glyphs
+    texts = [doc.get(k) or "" for k in ("subject", "salutation_text", "header_text", "footer_text", "notes_text")]
+    texts += [f"{ln.get('title') or ''} {ln.get('description') or ''} {ln.get('unit') or ''}" for ln in lines]
+    try:
+        chars = missing_glyphs(" ".join(texts))
+    except Exception:  # noqa: BLE001 – keine Schrift gefunden o.ä.: das meldet die PDF-Erzeugung selbst
+        return []
+    if not chars:
+        return []
+    return [f"Diese Zeichen kann die Belegschrift nicht darstellen und erscheinen im PDF als leere Kästchen: "
+            f"{' '.join(sorted(chars))}"]
 UNITS = ["Stunden", "Stück", "pauschal", "km", "Tage", "m²", "Monate"]
 
 
@@ -157,7 +171,8 @@ class DocumentEditor(QDialog):
         self.subject.setPlaceholderText("optional, z.B. Projekt-/Vorgangsbezeichnung")
         self.tax_mode = QComboBox()
         self.tax_mode.addItem("Kleinunternehmer (§ 19 UStG)", "kleinunternehmer")
-        self.tax_mode.addItem("Regelbesteuerung (mit USt)", "regel")
+        self.tax_mode.addItem("Regelbesteuerung (mit USt, eingeschränkt)", "regel")
+        self.tax_mode.setItemData(1, kleinunternehmer.REGEL_HINWEIS, Qt.ToolTipRole)
         self.tax_mode.setCurrentIndex(0 if self.doc.get("tax_mode") == "kleinunternehmer" else 1)
         self.tax_mode.currentIndexChanged.connect(self._tax_mode_changed)
         self.zugferd = QCheckBox("ZUGFeRD / E-Rechnung einbetten")
@@ -204,6 +219,11 @@ class DocumentEditor(QDialog):
         self.salutation.edit.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.header = TextField(ctx, ["kopf_angebot", "kopf_rechnung", "storno"] if dt != "angebot" else ["kopf_angebot", "kopf_rechnung"], 48)
         tf.addRow("Anrede", self.salutation)
+        # Platzhalter wie {briefanrede} sagen Einsteigern nichts: darunter steht, was im Brief erscheint
+        self.salutation_preview = QLabel()
+        self.salutation_preview.setObjectName("muted")
+        tf.addRow("", self.salutation_preview)
+        self.salutation.edit.textChanged.connect(self._update_salutation_preview)
         tf.addRow("Einleitung", self.header)
         root.addWidget(texts)
 
@@ -271,7 +291,7 @@ class DocumentEditor(QDialog):
         self.actions.addStretch(1)
         if not self.readonly:
             self.actions.addWidget(button("Speichern", self.save))
-            self.actions.addWidget(button("Festschreiben…", self.finalize, primary=True,
+            self.actions.addWidget(button("Festschreiben (endgültig)…", self.finalize, primary=True,
                                           tooltip="Nummer vergeben, PDF archivieren – danach unveränderbar"))
         outer.addLayout(self.actions)
 
@@ -314,6 +334,19 @@ class DocumentEditor(QDialog):
         self.project.setCurrentIndex(max(idx, 0))
         self.project.blockSignals(False)
         self._dirty = True
+        self._update_salutation_preview()
+
+    def _update_salutation_preview(self, *_):
+        text = self.salutation.text()
+        if "{" not in text:
+            self.salutation_preview.setText("")
+            return
+        if not self.customer.current_id():
+            self.salutation_preview.setText("Im Brief steht hier die Anrede des gewählten Kunden.")
+            return
+        doc = {**self.doc, "customer_id": self.customer.current_id(), "project_id": self.project.currentData()}
+        shown = documents.render(text, documents.placeholders(self.ctx.con, doc)).replace("\n", " ")
+        self.salutation_preview.setText(f"Im Brief: {shown}")
 
     def new_customer(self):
         dlg = CustomerDialog(self, self.ctx)
@@ -344,28 +377,32 @@ class DocumentEditor(QDialog):
         from datetime import timedelta
         d = self.doc_date.date().toPython()
         if self.doc["doc_type"] == "rechnung":
-            set_date(self.due_date, (d + timedelta(days=int(get_setting(self.ctx.con, "invoice.payment_days", "14")))).isoformat())
+            set_date(self.due_date, (d + timedelta(days=get_int_setting(self.ctx.con, "invoice.payment_days", "14"))).isoformat())
             if date_value(self.service_date) == self.doc.get("service_date"):
                 set_date(self.service_date, d.isoformat())
         elif self.doc["doc_type"] == "angebot":
-            set_date(self.valid_until, (d + timedelta(days=int(get_setting(self.ctx.con, "offer.valid_days", "30")))).isoformat())
+            set_date(self.valid_until, (d + timedelta(days=get_int_setting(self.ctx.con, "offer.valid_days", "30"))).isoformat())
 
     def _tax_mode_changed(self, *_):
         mode = self.tax_mode.currentData()
         notes = self.notes.text()
         ku_text = repo.default_text(self.ctx.con, "hinweis")
         if mode == "regel" and "§ 19" in notes:
-            self.notes.setText("\n".join(l for l in notes.splitlines() if "19" not in l))
+            # nur den Kleinunternehmer-Hinweis entfernen, nicht jede Zeile mit „19“ (z.B. „Zahlbar bis 19.11.“)
+            self.notes.setText("\n".join(l for l in notes.splitlines() if "§ 19" not in l and "Kleinunternehmer" not in l))
         elif mode == "kleinunternehmer" and "19" not in notes:
             self.notes.setText(ku_text)
         if mode == "regel":
-            default_rate = get_setting(self.ctx.con, "tax.default_rate", "19")
+            default_rate = self._default_rate()
             for r in range(self.table.rowCount()):
                 it = self.table.item(r, COL_TAX)
                 if it and it.text() in ("", "0"):
                     it.setText(default_rate)
         self.table.setColumnHidden(COL_TAX, mode != "regel")
         self._recalc()
+
+    def _default_rate(self) -> str:
+        return format(get_decimal_setting(self.ctx.con, "tax.default_rate", "19").normalize(), "f").replace(".", ",")
 
     # ------------------------------------------------------------ Positionen
     def _append_row(self, ln: dict):
@@ -377,7 +414,7 @@ class DocumentEditor(QDialog):
         self.table.setItem(r, COL_TITLE, title)
         for c, v in [(COL_QTY, fmt_qty(ln.get("quantity", "1"))), (COL_UNIT, ln.get("unit", "")),
                      (COL_PRICE, fmt_eur(ln.get("unit_price_cents", 0), False)),
-                     (COL_TAX, str(ln.get("tax_rate") or get_setting(self.ctx.con, "tax.default_rate", "19"))),
+                     (COL_TAX, str(ln.get("tax_rate") or self._default_rate())),
                      (COL_TOTAL, "")]:
             it = QTableWidgetItem(v)
             if c in (COL_QTY, COL_PRICE, COL_TAX, COL_TOTAL):
@@ -453,12 +490,21 @@ class DocumentEditor(QDialog):
             it = self.table.item(r, c)
             return it.text().strip() if it else ""
         return {"title": t(COL_TITLE), "description": self.table.item(r, COL_TITLE).data(Qt.UserRole) or "",
-                "quantity": str(to_decimal(t(COL_QTY) or "0")), "unit": t(COL_UNIT),
-                "unit_price_cents": to_cents(t(COL_PRICE) or "0"), "tax_rate": t(COL_TAX) or "0"}
+                "quantity": str(input_decimal(t(COL_QTY) or "0")), "unit": t(COL_UNIT),
+                "unit_price_cents": input_cents(t(COL_PRICE) or "0"),
+                # „19 %“, „7%“ oder „7,5“ einheitlich speichern; Unlesbares löst hier (je Zeile) den Fehler aus
+                "tax_rate": format(input_decimal(t(COL_TAX) or "0").normalize(), "f")}
 
     def lines(self) -> list[dict]:
-        return [self._row_dict(r) for r in range(self.table.rowCount())
-                if self._row_dict(r)["title"] or self._row_dict(r)["description"] or self._row_dict(r)["unit_price_cents"]]
+        out = []
+        for r in range(self.table.rowCount()):
+            try:
+                d = self._row_dict(r)
+            except ValueError as e:
+                raise ValueError(f"Position {r + 1}: {e}") from e
+            if d["title"] or d["description"] or d["unit_price_cents"]:
+                out.append(d)
+        return out
 
     def _row_changed(self, row, *_):
         self.desc.edit.blockSignals(True)
@@ -573,12 +619,8 @@ class DocumentEditor(QDialog):
                 doc, lines = self.doc, documents.get_lines(self.ctx.con, self.doc["id"])
             else:
                 doc, lines = self._collect(), self.lines()
-            path = Path(tempfile.gettempdir()) / f"{config.APP_NAME}-Vorschau-{doc.get('id') or 'neu'}.pdf"
-            try:
-                if path.exists():
-                    path.unlink()
-            except OSError:
-                path = Path(tempfile.mkstemp(suffix=".pdf")[1])
+            # eindeutiger Name: eine noch im PDF-Betrachter geöffnete ältere Vorschau blockiert nichts
+            path = config.preview_dir() / f"Vorschau-{doc.get('id') or 'neu'}-{datetime.now():%H%M%S%f}.pdf"
             documents.render_preview(self.ctx.con, doc, lines, path)
             open_file(path)
         except Exception as e:  # noqa: BLE001
@@ -592,13 +634,21 @@ class DocumentEditor(QDialog):
         if problems:
             QMessageBox.warning(self, "Pflichtangaben fehlen", "Bitte ergänzen:\n\n• " + "\n• ".join(problems))
             return
+        odd = documents.plausibility_warnings(self.doc, lines, default_tax_mode=get_setting(self.ctx.con, "tax.mode"))
+        odd += missing_glyph_warning(self.doc, lines)
+        if odd and not confirm(self, "Bitte prüfen", "• " + "\n• ".join(odd) + "\n\nTrotzdem festschreiben?"):
+            return
         warns = kleinunternehmer.check_before_finalize(self.ctx.con, self.doc)
         if warns and not confirm(self, "Kleinunternehmer-Grenze", "\n\n".join(warns) + "\n\nTrotzdem festschreiben?"):
             return
         label = documents.DOC_TYPE_LABEL[self.doc["doc_type"]]
         nxt = numbering.peek_next(self.ctx.con, self.doc["doc_type"], self.doc_date.date().toPython())
         if not confirm(self, f"{label} festschreiben",
-                       f"{label} jetzt festschreiben?\n\nNummer: {nxt}\nBetrag: {fmt_eur(self.doc['total_gross_cents'])}\n\n"
+                       f"{label} jetzt festschreiben?\n\nNummer: {nxt}\n"
+                       f"Kunde: {self.customer.currentText()}\n"
+                       f"Datum: {self.doc_date.text()}\n"
+                       f"Besteuerung: {self.tax_mode.currentText()}\n"
+                       f"Betrag: {fmt_eur(self.doc['total_gross_cents'])}\n\n"
                        "Danach ist der Beleg unveränderbar (GoBD). Korrekturen sind nur per Storno möglich."):
             return
         try:

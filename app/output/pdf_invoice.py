@@ -50,6 +50,13 @@ def _register_fonts():
     _FONTS_REGISTERED = True
 
 
+def missing_glyphs(text: str) -> set[str]:
+    """Zeichen, die die Belegschrift nicht darstellen kann (z.B. Emojis) – im PDF stünden dort leere Kästchen."""
+    _register_fonts()
+    known = pdfmetrics.getFont(F_REG).face.charWidths
+    return {ch for ch in text if not ch.isspace() and ord(ch) not in known}
+
+
 def _styles():
     base = ParagraphStyle("base", fontName=F_REG, fontSize=10.5, leading=13.5, alignment=TA_LEFT)
     return {
@@ -135,8 +142,8 @@ class _NumberedCanvas(rl_canvas.Canvas):
 def _draw_letterhead(c, data: dict, first: bool):
     comp = data["company"]
     if first:
-        logo = data.get("logo")
-        if logo and Path(logo).exists():
+        logo = config.resolve_stored_path(data.get("logo"))
+        if logo and logo.exists():
             w = 68 * mm
             h = w * 793 / 2196
             try:
@@ -279,7 +286,9 @@ def write_document_pdf(data: dict, path: Path | str) -> Path:
                      _p(ln.get("unit", ""), st["cell"]), _p(fmt_eur(ln.get("unit_price_cents")), st["cellr"]),
                      _p(fmt_eur(ln.get("total_cents")), st["cellr"])])
     widths = [10 * mm, CONTENT_W - 88 * mm, 16 * mm, 18 * mm, 21 * mm, 23 * mm]
-    t = Table(rows, colWidths=widths, repeatRows=1)
+    # splitInRow: eine sehr lange Beschreibung (z.B. eingefügtes Leistungsverzeichnis) darf über die Seite laufen,
+    # statt das PDF mit „LayoutError … too large“ abzubrechen
+    t = Table(rows, colWidths=widths, repeatRows=1, splitInRow=1)
     t.setStyle(TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
         ("BACKGROUND", (0, 0), (-1, 0), colors.Color(0.92, 0.95, 0.91)),

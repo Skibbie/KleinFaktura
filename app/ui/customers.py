@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGridLayout, QGroupBox,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGridLayout, QGroupBox,
                                QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QTabWidget,
                                QVBoxLayout, QWidget)
 
 from app.db import repo
 from app.db.database import profile
-from app.ui.common import (Ctx, GuardedDialog, button, confirm, error, hbox, item, make_table, page_title,
+from app.ui.common import (Ctx, GuardedDialog, button, confirm, count, error, hbox, item, make_table, page_title,
                            searchable_combo, selected_data)
 
 
@@ -230,7 +230,11 @@ class CustomersPage(QWidget):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Suchen (Name, Firma, Ort, Kundennr., E-Mail) …")
         self.search.textChanged.connect(self.reload)
-        lay.addLayout(hbox(self.search))
+        self.show_inactive = QCheckBox("Entfernte (inaktive) anzeigen")
+        self.show_inactive.toggled.connect(self.reload)
+        self.reactivate_btn = button("Wieder aktivieren", self.reactivate,
+                                     tooltip="Einen entfernten Kunden wieder in Liste und Auswahl aufnehmen")
+        lay.addLayout(hbox(self.search, self.show_inactive, self.reactivate_btn))
         self.hottgenroth_btn = button("Aus Hottgenroth importieren", self.import_hottgenroth)
         lay.addLayout(hbox(button("Neuer Kunde", self.new, primary=True),
                            button("Bearbeiten", self.edit),
@@ -249,16 +253,18 @@ class CustomersPage(QWidget):
 
     def reload(self, *_):
         self.hottgenroth_btn.setVisible(profile(self.ctx.con).hottgenroth)
-        rows = repo.list_customers(self.ctx.con, self.search.text().strip())
+        self.reactivate_btn.setVisible(self.show_inactive.isChecked())
+        rows = repo.list_customers(self.ctx.con, self.search.text().strip(), include_inactive=self.show_inactive.isChecked())
         self.table.setRowCount(0)
         for c in rows:
             r = self.table.rowCount()
             self.table.insertRow(r)
             vals = [c["customer_no"], repo.customer_display_name(c), c["street"], c["zip"], c["city"], c["email"],
-                    c["phone"] or c["mobile"], {"hottgenroth": "Hottgenroth", "csv": "CSV", "import": "Rechnungsimport"}.get(c["source"], "manuell")]
+                    c["phone"] or c["mobile"], {"hottgenroth": "Hottgenroth", "csv": "CSV", "import": "Rechnungsimport"}.get(c["source"], "manuell")
+                    + ("" if c["active"] else " · inaktiv")]
             for i, v in enumerate(vals):
                 self.table.setItem(r, i, item(v, c["id"] if i == 0 else None))
-        self.count.setText(f"{len(rows)} Kunden")
+        self.count.setText(count(len(rows), "Kunde", "Kunden"))
 
     def _open(self, customer=None):
         host = getattr(self.ctx, "editor_host", None)
@@ -282,9 +288,21 @@ class CustomersPage(QWidget):
             return
         c = repo.get_customer(self.ctx.con, cid)
         if confirm(self, "Kunde entfernen", f"{repo.customer_display_name(c)} entfernen?\n\n"
-                   "Kunden mit Belegen werden nur deaktiviert (GoBD)."):
+                   "Kunden mit Belegen, Fahrten oder Notizen werden nur deaktiviert (GoBD) und lassen sich über "
+                   "„Entfernte (inaktive) anzeigen“ wieder aktivieren. Kunden ohne Bezug werden gelöscht."):
             repo.deactivate_customer(self.ctx.con, cid)
             self.ctx.changed()
+
+    def reactivate(self):
+        cid = selected_data(self.table)
+        c = repo.get_customer(self.ctx.con, cid) if cid else None
+        if not c:
+            return
+        if c["active"]:
+            QMessageBox.information(self, "Kunde", f"{repo.customer_display_name(c)} ist aktiv.")
+            return
+        repo.reactivate_customer(self.ctx.con, cid)
+        self.ctx.changed()
 
     def import_hottgenroth(self):
         from app.ui.import_dialogs import run_hottgenroth_import

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.importers.csv_import import read_table
-from app.money import parse_date, to_cents
+from app.money import input_cents, parse_date
 from app.services import expenses
 
 TARGETS = {"": "(ignorieren)", "date": "Buchungsdatum", "amount": "Betrag", "name": "Empfänger / Auftraggeber",
@@ -26,7 +26,10 @@ _GUESS = [
     ("credit", r"^(haben|gutschrift|eingang)$"),
     ("name", r"^(beg(ü|ue)nstigter.*|empf(ä|ae)nger.*|zahlungsempf(ä|ae)nger.*|auftraggeber.*|name.*|"
              r"zahlungspflichtige.*|gegenkonto.*name|partner.*)$"),
-    ("purpose", r"^(verwendungszweck.*|buchungstext|vorgang.*|beschreibung|zweck)$"),
+    # Reihenfolge = Vorrang: „Verwendungszweck“ schlägt „Buchungstext“ (z.B. Sparkasse: Buchungstext steht davor
+    # und enthält nur „FOLGELASTSCHRIFT“)
+    ("purpose", r"^(verwendungszweck.*|zweck)$"),
+    ("purpose", r"^(buchungstext|vorgang.*|beschreibung)$"),
 ]
 
 # einfache Zuordnungsregeln (Lieferant/Zweck -> Kategorie)
@@ -55,17 +58,16 @@ class BankRow:
 
 
 def guess_mapping(headers: list[str]) -> list[str]:
-    out = []
-    used = set()
-    for h in headers:
-        key = re.sub(r"\s+", " ", h.strip().lower().replace('"', ""))
-        hit = ""
-        for target, rx in _GUESS:
-            if target not in used and re.match(rx, key):
-                hit = target
-                used.add(target)
+    """Spaltenzuordnung nach Überschrift; je Ziel gewinnt das erste passende Muster in _GUESS (Vorrang)."""
+    keys = [re.sub(r"\s+", " ", h.strip().lower().replace('"', "")) for h in headers]
+    out = [""] * len(headers)
+    for target, rx in _GUESS:
+        if target in out:
+            continue
+        for i, key in enumerate(keys):
+            if not out[i] and re.match(rx, key):
+                out[i] = target
                 break
-        out.append(hit)
     return out
 
 
@@ -92,6 +94,7 @@ def parse(con: sqlite3.Connection, path: Path | str, mapping: list[str] | None =
             break
     mapping = mapping or guess_mapping(headers)
     out: list[BankRow] = []
+    seen: dict[str, int] = {}
     for r in rows:
         def col(name):
             if name not in mapping:
@@ -103,19 +106,24 @@ def parse(con: sqlite3.Connection, path: Path | str, mapping: list[str] | None =
             continue
         try:
             if "amount" in mapping:
-                amount = to_cents(col("amount") or "0")
+                amount = input_cents(col("amount") or "0")
             else:
-                amount = to_cents(col("credit") or "0") - abs(to_cents(col("debit") or "0"))
+                amount = input_cents(col("credit") or "0") - abs(input_cents(col("debit") or "0"))
         except ValueError:
             continue
         if amount >= 0:
             continue  # nur Abbuchungen
         name, purpose = col("name"), col("purpose")
-        fp = hashlib.sha256(f"{d}|{amount}|{name}|{purpose}".encode("utf-8")).hexdigest()[:32]
+        # gleiche Buchung mehrfach in derselben Datei (z.B. zweimal Parkgebühr) = mehrere echte Abbuchungen:
+        # ab dem zweiten Vorkommen zählt die laufende Nummer mit (das erste behält den bisherigen Fingerabdruck)
+        key = f"{d}|{amount}|{name}|{purpose}"
+        n = seen.get(key, 0)
+        seen[key] = n + 1
+        fp = hashlib.sha256((key if n == 0 else f"{key}|{n}").encode("utf-8")).hexdigest()[:32]
         row = BankRow(d, -amount, name, purpose, fp, guess_category(name, purpose, con))
-        row.duplicate = bool(con.execute("SELECT 1 FROM expense WHERE bank_ref=?", (fp,)).fetchone()) or bool(
-            con.execute("SELECT 1 FROM expense WHERE exp_date=? AND amount_cents=? AND LOWER(supplier)=LOWER(?)",
-                        (d, -amount, name)).fetchone())
+        row.duplicate = bool(con.execute("SELECT 1 FROM expense WHERE bank_ref=?", (fp,)).fetchone()) or (
+            n == 0 and bool(con.execute("SELECT 1 FROM expense WHERE exp_date=? AND amount_cents=? AND "
+                                        "LOWER(supplier)=LOWER(?) AND bank_ref IS NULL", (d, -amount, name)).fetchone()))
         row.likely_private = bool(re.search(SKIP_PATTERNS, f"{name} {purpose}".lower()))
         out.append(row)
     return headers, mapping, out

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -46,9 +47,22 @@ def _clean(v) -> str:
     return "" if v is None else str(v).strip()
 
 
+_SERVER_OK = re.compile(r"^[\w.\-()\\]+(,\d+)?$")
+_DRIVER_OK = re.compile(r"^[\w .\-]+$")
+
+
+def check_connection_settings(server: str, driver: str) -> None:
+    """Keine Zusatzangaben im Verbindungstext (z.B. „;Database=…“ oder „{…}“). Der Server selbst darf auch ein
+    anderer Rechner sein (Mehrplatz-Installation); eine Rücksicherung übernimmt diese Einstellung nie aus der
+    Sicherung, sodass sie nur der Anwender selbst setzen kann."""
+    if not _SERVER_OK.match(server or "") or not _DRIVER_OK.match(driver or ""):
+        raise HottgenrothError("Ungültige Angabe für SQL-Server oder ODBC-Treiber (Einstellungen → Hottgenroth).")
+
+
 def connection_string(con: sqlite3.Connection | None = None, database: str = "HsetuCimData") -> str:
     server = get_setting(con, "hottgenroth.server") if con else r"(localdb)\HSETU"
     driver = get_setting(con, "hottgenroth.driver") if con else "SQL Server Native Client 11.0"
+    check_connection_settings(server, driver)
     return (f"DRIVER={{{driver}}};Server={server};Database={database};Trusted_Connection=yes;"
             "ApplicationIntent=ReadOnly;")
 

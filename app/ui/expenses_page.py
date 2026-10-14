@@ -12,11 +12,11 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QCompleter, QDialog, QDialo
 from app.db.database import get_setting, set_setting
 from app.importers import bank_csv
 from app.importers.csv_import import read_table
-from app.money import fmt_date, fmt_eur, to_cents, to_decimal
+from app.money import fmt_date, fmt_eur, input_cents, input_decimal, to_decimal
 from app.services import expenses
 from app.services.expenses import CAT, CATEGORIES
 from app.ui import theme
-from app.ui.common import (Ctx, GuardedDialog, button, check_item, confirm, date_edit, date_value, error, hbox, item,
+from app.ui.common import (Ctx, GuardedDialog, button, check_item, confirm, count, date_edit, date_value, error, hbox, item,
                            make_table, open_file, page_title, selected_data)
 
 
@@ -75,6 +75,7 @@ class ExpenseDialog(GuardedDialog, QDialog):
             self.category.addItem(c.label, c.key)
         self.category.setCurrentIndex(max(self.category.findData(self.exp.get("category", "uebrige")), 0))
         self.category.currentIndexChanged.connect(self._category_changed)
+        self.category.activated.connect(lambda *_: setattr(self, "_category_chosen", True))  # nur echte Auswahl
         self.cat_hint = QLabel()
         self.cat_hint.setObjectName("muted")
         self.cat_hint.setWordWrap(True)
@@ -146,10 +147,14 @@ class ExpenseDialog(GuardedDialog, QDialog):
                 self.note.toPlainText(), self.new_receipt)
 
     def _supplier_done(self):
-        if not self.exp.get("id"):
-            cat = expenses.last_category_for(self.ctx.con, self.supplier.currentText())
-            if cat:
-                self.category.setCurrentIndex(self.category.findData(cat))
+        """Kategorie des letzten Belegs dieses Lieferanten vorschlagen – nur bei neuen Ausgaben, nur wenn der
+        Anwender die Kategorie nicht schon selbst gewählt hat und nur mit einer hier wählbaren Kategorie."""
+        name = self.supplier.currentText().strip()
+        if self.exp.get("id") or not name or getattr(self, "_category_chosen", False):
+            return
+        idx = self.category.findData(expenses.last_category_for(self.ctx.con, name))
+        if idx >= 0:
+            self.category.setCurrentIndex(idx)
 
     def _category_changed(self, *_):
         c = CAT[self.category.currentData()]
@@ -168,11 +173,11 @@ class ExpenseDialog(GuardedDialog, QDialog):
         txt = ""
         try:
             if c.kind == "km":
-                km = to_decimal(self.km.text() or "0")
+                km = input_decimal(self.km.text() or "0")
                 rate = get_setting(self.ctx.con, "expense.km_rate", "0,30")
                 txt = f"{str(km).replace('.', ',')} km × {rate} € = {fmt_eur(expenses.km_amount_cents(self.ctx.con, km))}"
             else:
-                cents = to_cents(self.amount.text() or "0")
+                cents = input_cents(self.amount.text() or "0")
                 net = expenses.net_cents(cents, self.vat.currentData())
                 if c.kind == "gwg" and net > expenses.GWG_LIMIT_NET_CENTS:
                     txt = (f"Netto {fmt_eur(net)} liegt über 800 €. Bitte „Anschaffung über 800 € netto“ wählen, "
@@ -222,11 +227,11 @@ class ExpenseDialog(GuardedDialog, QDialog):
              "source": self.exp.get("source") or "manuell", "bank_ref": self.exp.get("bank_ref")}
         try:
             if CAT[d["category"]].kind == "km":
-                d["km"] = str(to_decimal(self.km.text() or "0"))
+                d["km"] = str(input_decimal(self.km.text() or "0"))
                 d["amount_cents"] = 0
             else:
                 d["km"] = None
-                d["amount_cents"] = to_cents(self.amount.text() or "0")
+                d["amount_cents"] = input_cents(self.amount.text() or "0")
             if self.new_receipt:
                 d["receipt_path"], d["receipt_sha256"] = expenses.archive_receipt(self.new_receipt, d["exp_date"])
             self.exp_id = expenses.save_expense(self.ctx.con, d)
@@ -246,7 +251,7 @@ class BankImportDialog(QDialog):
         self.resize(1100, 640)
         lay = QVBoxLayout(self)
         lay.addWidget(QLabel(f"Datei: {Path(path).name}. Vorgeschlagen werden nur Abbuchungen. Bitte private Buchungen "
-                             "abwählen und die Kategorie prüfen. Belege kannst du danach an jede Ausgabe anhängen."))
+                             "abwählen und die Kategorie prüfen. Belege können Sie danach an jede Ausgabe anhängen."))
         self.map_row = QHBoxLayout()
         lay.addLayout(self.map_row)
         self.table = QTableWidget(0, 6)
@@ -349,7 +354,7 @@ class BankImportDialog(QDialog):
         except Exception as e:  # noqa: BLE001
             error(self, "Übernahme fehlgeschlagen", e)
             return
-        QMessageBox.information(self, "Kontoauszug", f"{n} Ausgaben übernommen.")
+        QMessageBox.information(self, "Kontoauszug", f"{count(n, 'Ausgabe', 'Ausgaben')} übernommen.")
         self.accept()
 
 
@@ -404,7 +409,7 @@ class ExpensesPage(QWidget):
                                               color=theme.SCALE[6] if (i == 5 and v == "fehlt") else None))
             total += e["amount_cents"]
         period = self.year.currentText() if self.year.currentData() else "alle Jahre"
-        txt = f"{len(rows)} Ausgaben {period}, gezahlt {fmt_eur(total)}"
+        txt = f"{count(len(rows), 'Ausgabe', 'Ausgaben')} {period}, gezahlt {fmt_eur(total)}"
         if missing:
             txt += f", bei {missing} fehlt noch der Beleg"
         self.sum_label.setText(txt)
@@ -472,8 +477,7 @@ class EuerPage(QWidget):
         head.addWidget(QLabel("Jahr"))
         head.addWidget(self.year)
         lay.addLayout(head)
-        intro = QLabel("Diese Summen trägst du in deiner Steuersoftware in die Anlage EÜR ein. Hake ab, was übertragen ist. "
-                       "Ausgaben sind Bruttobeträge, weil du als Kleinunternehmer keine Vorsteuer abziehst.")
+        self.intro = intro = QLabel()
         intro.setObjectName("muted")
         intro.setWordWrap(True)
         lay.addWidget(intro)
@@ -509,6 +513,15 @@ class EuerPage(QWidget):
         return f"euer.done.{self.year.currentData()}.{key}"
 
     def reload(self, *_):
+        if get_setting(self.ctx.con, "tax.mode") == "kleinunternehmer":
+            self.intro.setText("Diese Summen übertragen Sie in Ihrer Steuersoftware in die Anlage EÜR. Haken Sie ab, "
+                               "was übertragen ist. Ausgaben sind Bruttobeträge, weil Kleinunternehmer keine Vorsteuer "
+                               "abziehen.")
+        else:
+            self.intro.setText("Diese Summen übertragen Sie in Ihrer Steuersoftware in die Anlage EÜR. Achtung: Bei "
+                               "Regelbesteuerung sind Umsatzsteuer und Vorsteuer hier nicht getrennt ausgewiesen, "
+                               "Ausgaben und Abschreibungen sind Bruttobeträge (eingeschränkte Unterstützung) – bitte mit "
+                               "dem Steuerberater abstimmen.")
         y = self.year.currentData()
         v = expenses.euer_values(self.ctx.con, y)
         self.values = v
@@ -533,7 +546,7 @@ class EuerPage(QWidget):
         self.l_profit.setText(fmt_eur(v["profit_cents"]))
         warns = []
         if v["missing_receipts"]:
-            warns.append(f"Bei {v['missing_receipts']} Ausgaben in {y} fehlt noch der Beleg.")
+            warns.append(f"Bei {count(v['missing_receipts'], 'Ausgabe', 'Ausgaben')} in {y} fehlt noch der Beleg.")
         if v["locked"]:
             warns.append(f"Das Jahr {y} ist abgeschlossen, Ausgaben und Fahrten sind unveränderbar.")
         self.warn.setText(" ".join(warns))
@@ -570,6 +583,11 @@ class EuerPage(QWidget):
         y = self.year.currentData()
         if expenses.is_locked(self.ctx.con, y):
             QMessageBox.information(self, "Jahr abschließen", f"{y} ist bereits abgeschlossen.")
+            return
+        if y >= date.today().year:
+            QMessageBox.information(self, "Jahr abschließen", f"{y} ist noch nicht vorbei und kann erst nach dem "
+                                                              "Jahreswechsel abgeschlossen werden. Für das Vorjahr "
+                                                              "bitte oben das Jahr umstellen.")
             return
         if confirm(self, "Jahr abschließen", f"Ausgaben und Fahrten {y} abschließen?\n\nDanach können Ausgaben und Fahrten dieses Jahres nicht mehr "
                    "geändert, gelöscht oder nachgetragen werden (GoBD). Das lässt sich nicht rückgängig machen. "

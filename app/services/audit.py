@@ -27,6 +27,13 @@ def log(con: sqlite3.Connection, action: str, entity: str, entity_id: int | None
     )
 
 
+def head(con: sqlite3.Connection) -> str:
+    """Kettenkopf (Anzahl Einträge und letzter Hash) zum Festhalten außerhalb der Datenbank (Sicherung, Export):
+    ein späterer Abgleich macht auch das Entfernen der letzten Einträge erkennbar, das verify() allein nicht sieht."""
+    n, last = con.execute("SELECT COUNT(*), (SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1) FROM audit_log").fetchone()
+    return f"Protokoll: {n} Einträge, letzter Hash {last or GENESIS}"
+
+
 def verify(con: sqlite3.Connection) -> tuple[bool, str]:
     """Prüft die komplette Kette. Rückgabe (ok, Meldung)."""
     prev = GENESIS

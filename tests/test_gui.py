@@ -103,7 +103,7 @@ def test_click_through(gui):
     assert documents.is_cancelled(ctx.con, inv["id"])
     rp.reload()
     # Rechnung + Storno heben sich auf (vorher wurde die stornierte Rechnung doppelt abgezogen)
-    assert "1 Rechnungen" in rp.sum_label.text() and "berechnet 0,00 €" in rp.sum_label.text()
+    assert "1 Rechnung " in rp.sum_label.text() and "berechnet 0,00 €" in rp.sum_label.text()
 
     # Einstellungen + Startwert
     sp = SettingsPage(ctx)
@@ -458,7 +458,19 @@ def test_customer_combo_click_clears_placeholder(gui):
     QTest.mouseClick(le, Qt.LeftButton)
     assert le.text() == "" and cb.completer().popup().isVisible()
     cb.completer().popup().hide()
-    le.editingFinished.emit()  # leer verlassen -> wieder „kein Kunde“
+    le.editingFinished.emit()  # leer verlassen -> wieder „kein Kunde“ (Prüfung läuft verzögert)
+    app.processEvents()
+    assert cb.currentIndex() == 0 and le.text() == "(kein Kunde)"
+    # Text getippt, aber nichts gewählt: nicht den vorherigen Eintrag behalten
+    cb.addItem("Hans Beispiel", 8)
+    cb.setCurrentIndex(1)
+    le.setText("Bei")
+    le.editingFinished.emit()
+    app.processEvents()
+    assert cb.currentData() == 8                     # eindeutiger Treffer übernommen
+    le.setText("xyz")
+    le.editingFinished.emit()
+    app.processEvents()
     assert cb.currentIndex() == 0 and le.text() == "(kein Kunde)"
     cb.setCurrentIndex(1)
     QTest.mouseClick(le, Qt.LeftButton)
@@ -619,3 +631,20 @@ def test_mail_and_pdf_export(gui):
     page.mail()
     args = [a for n, a in log if n == "mail"][-1]
     assert args[1] == "-compose" and "to='erika@example.org'" in args[2] and f"anbei {inv['number']}." in args[2]
+
+
+def test_settings_reject_invalid_numbers(gui):
+    app, ctx, log, mp, tmp = gui
+    from app.db.database import get_setting
+    from app.ui.settings_page import SettingsPage
+    sp = SettingsPage(ctx)
+    sp.edits["invoice.payment_days"].setText("14 Tage")
+    assert sp.save(quiet=True) is False
+    assert log[-1][0] == "warning" and "Zahlungsziel" in log[-1][1]
+    assert get_setting(ctx.con, "invoice.payment_days") == "14"
+    sp.edits["invoice.payment_days"].setText("21")
+    sp.edits["ku.limit_prev"].setText("25.000")
+    sp.edits["dunning.fee_2"].setText("5,50")
+    assert sp.save(quiet=True) is True
+    assert get_setting(ctx.con, "ku.limit_prev") == "25000,00" and get_setting(ctx.con, "dunning.fee_2") == "5,50"
+    assert get_setting(ctx.con, "invoice.payment_days") == "21" and sp._snapshot() == sp._clean

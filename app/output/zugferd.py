@@ -11,6 +11,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from app import config
+from app.db import repo
 from app.money import cents_to_decimal, to_decimal
 
 NS = {
@@ -77,7 +78,11 @@ def _party(parent, tag, name, street, zip_, city, country, email=None, tax_numbe
         _sub(addr, "ram:LineOne", street)
     if city:
         _sub(addr, "ram:CityName", city)
-    _sub(addr, "ram:CountryID", (country or "DE").upper()[:2] if (country or "DE").upper() not in ("DEUTSCHLAND",) else "DE")
+    code = repo.country_code(country)
+    if code is None:
+        # nie abschneiden/raten („Germany“ → GE = Georgien); validate() meldet das schon vor dem Festschreiben
+        raise ValueError(f"Unbekanntes Land „{country}“ – bitte den Ländercode (z.B. DE, AT, CH) eintragen.")
+    _sub(addr, "ram:CountryID", code)
     if email:
         _sub(_sub(p, "ram:URIUniversalCommunication"), "ram:URIID", email, schemeID="EM")
     if vat_id:

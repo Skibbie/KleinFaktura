@@ -31,6 +31,16 @@ def needs_setup(con) -> bool:
     return not get_setting(con, "company.name") and get_setting(con, DONE_SETTING) != "1"
 
 
+def copy_logo_to_data_dir(logo: str) -> Path:
+    """Logo in den Datenordner kopieren: bleibt erhalten, wenn das Original (z.B. in „Downloads“) gelöscht wird,
+    und kommt mit in die Sicherung."""
+    src = Path(logo)
+    dest = config.data_dir() / f"logo{src.suffix.lower()}"
+    if src.resolve() != dest.resolve():
+        shutil.copy2(src, dest)
+    return dest
+
+
 def apply_setup(con, values: dict[str, str], profile: str, tax_mode: str, logo: str, backup_dir: str) -> None:
     """Übernimmt die Angaben des Assistenten. Das Logo wird in den Datenordner kopiert, damit es unabhängig vom
     ursprünglichen Speicherort erhalten bleibt (und in Sicherungen landet)."""
@@ -39,11 +49,7 @@ def apply_setup(con, values: dict[str, str], profile: str, tax_mode: str, logo: 
             set_setting(con, key, v.strip())
         set_setting(con, "tax.mode", tax_mode)
         if logo:
-            src = Path(logo)
-            dest = config.data_dir() / f"logo{src.suffix.lower()}"
-            if src.resolve() != dest.resolve():
-                shutil.copy2(src, dest)
-            set_setting(con, "company.logo", str(dest))
+            set_setting(con, "company.logo", str(copy_logo_to_data_dir(logo)))
         if backup_dir:
             set_setting(con, "backup.dir", backup_dir)
         apply_profile(con, profile)
@@ -118,11 +124,17 @@ class SetupWizard(QWizard):
         lay.addSpacing(16)
         self.tax_group = QButtonGroup(page)
         self.tax_ku = QRadioButton("Kleinunternehmer (§ 19 UStG) – keine Umsatzsteuer auf Rechnungen")
-        self.tax_regel = QRadioButton("Regelbesteuerung – Umsatzsteuer ausweisen")
+        from app.services.kleinunternehmer import REGEL_HINWEIS, REGEL_LABEL
+        self.tax_regel = QRadioButton(REGEL_LABEL)
+        self.tax_regel.setToolTip(REGEL_HINWEIS)
         (self.tax_ku if get_setting(ctx.con, "tax.mode") == "kleinunternehmer" else self.tax_regel).setChecked(True)
         for rb in (self.tax_ku, self.tax_regel):
             self.tax_group.addButton(rb)
             lay.addWidget(rb)
+        regel_hint = QLabel(REGEL_HINWEIS)
+        regel_hint.setWordWrap(True)
+        regel_hint.setObjectName("muted")
+        lay.addWidget(regel_hint)
         lay.addStretch(1)
         self.addPage(page)
 

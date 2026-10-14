@@ -11,7 +11,7 @@ import re
 import sqlite3
 from datetime import date
 
-from app.db.database import get_setting
+from app.db.database import get_int_setting, get_setting
 
 RANGE_FOR_TYPE = {"rechnung": "rechnung", "storno": "rechnung", "angebot": "angebot"}
 
@@ -22,10 +22,7 @@ def _prefix(con, rng: str) -> str:
 
 
 def _digits(con) -> int:
-    try:
-        return max(2, int(get_setting(con, "number.digits", "2")))
-    except ValueError:
-        return 2
+    return max(2, get_int_setting(con, "number.digits", "2"))
 
 
 def format_number(prefix: str, year: int, month: int, counter: int, digits: int = 2) -> str:

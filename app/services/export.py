@@ -12,14 +12,20 @@ from app import config
 from app.db import repo
 from app.db.database import get_setting
 from app.money import cents_to_decimal, fmt_date
-from app.services import documents
+from app.services import audit, documents, payments
 
 DOC_COLS = ["Belegnummer", "Belegart", "Datum", "Leistungsdatum", "Fällig", "Kundennr.", "Kunde", "Netto", "USt",
             "Brutto", "Bezahlt", "Offen", "Status", "Quelle"]
 
 
-def _customer_name(con, cid):
-    return repo.customer_display_name(repo.get_customer(con, cid) or {}) if cid else ""
+_CUSTOMER_COLS = "c.first_name, c.last_name, c.company"
+
+
+def _name(row) -> str:
+    """Kundenname aus mitgelesenen Spalten (first_name, last_name, company bzw. c_company)."""
+    r = dict(row)
+    return repo.customer_display_name({"first_name": r.get("first_name"), "last_name": r.get("last_name"),
+                                       "company": r.get("c_company", r.get("company"))})
 
 
 def revenue_rows(con: sqlite3.Connection, year: int | None) -> list[list]:
@@ -29,7 +35,7 @@ def revenue_rows(con: sqlite3.Connection, year: int | None) -> list[list]:
             continue
         rows.append([d["number"], documents.DOC_TYPE_LABEL[d["doc_type"]], fmt_date(d["doc_date"]),
                      fmt_date(d["service_date"]), fmt_date(d["due_date"]), d.get("customer_no") or "",
-                     _customer_name(con, d["customer_id"]), cents_to_decimal(d["total_net_cents"]),
+                     _name(d), cents_to_decimal(d["total_net_cents"]),
                      cents_to_decimal(d["total_tax_cents"]), cents_to_decimal(d["total_gross_cents"]),
                      cents_to_decimal(d["paid_cents"]), cents_to_decimal(d["open_cents"]), d["status_label"],
                      "Import" if d["source"] == "import" else config.APP_NAME])
@@ -38,15 +44,23 @@ def revenue_rows(con: sqlite3.Connection, year: int | None) -> list[list]:
 
 
 def income_rows(con: sqlite3.Connection, year: int | None) -> list[list]:
-    sql = """SELECT p.pay_date, p.amount_cents, p.method, p.note, d.number, d.customer_id
-             FROM payment p JOIN document d ON d.id=p.document_id"""
+    sql = f"""SELECT p.pay_date, p.amount_cents, p.method, p.note, d.number, {_CUSTOMER_COLS}
+              FROM payment p JOIN document d ON d.id=p.document_id LEFT JOIN customer c ON c.id=d.customer_id"""
     args = []
     if year:
         sql += " WHERE substr(p.pay_date,1,4)=?"
         args.append(f"{year:04d}")
     sql += " ORDER BY p.pay_date, p.id"
-    return [[fmt_date(r["pay_date"]), r["number"], _customer_name(con, r["customer_id"]),
+    return [[fmt_date(r["pay_date"]), r["number"], _name(r),
              cents_to_decimal(r["amount_cents"]), r["method"], r["note"]] for r in con.execute(sql, args)]
+
+
+_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _is_formula_like(v) -> bool:
+    """Text, den Excel als Formel ausführen würde (z.B. ein Kundenname „=HYPERLINK(…)“ aus einem Import)."""
+    return isinstance(v, str) and v.startswith(_FORMULA_START)
 
 
 def write_xlsx(path: Path, sheets: dict[str, tuple[list[str], list[list]]]) -> Path:
@@ -61,6 +75,9 @@ def write_xlsx(path: Path, sheets: dict[str, tuple[list[str], list[list]]]) -> P
             c.font = Font(bold=True)
         for r in rows:
             ws.append([float(v) if hasattr(v, "quantize") else v for v in r])
+            for c, v in zip(ws[ws.max_row], r):
+                if _is_formula_like(v):
+                    c.data_type = "s"        # als Text speichern, nie als Formel
         for col in ws.columns:
             width = max(len(str(c.value or "")) for c in col) + 2
             ws.column_dimensions[col[0].column_letter].width = min(width, 50)
@@ -77,7 +94,9 @@ def write_csv(path: Path, header: list[str], rows: list[list]) -> Path:
         w = csv.writer(f, delimiter=";")
         w.writerow(header)
         for r in rows:
-            w.writerow([f"{v:.2f}".replace(".", ",") if hasattr(v, "quantize") else v for v in r])
+            # Text mit Formelbeginn mit ' entschärfen (Excel würde ihn beim Öffnen sonst ausführen)
+            w.writerow([f"{v:.2f}".replace(".", ",") if hasattr(v, "quantize") else
+                        "'" + v if _is_formula_like(v) else v for v in r])
     return path
 
 
@@ -92,9 +111,11 @@ def export_revenue(con: sqlite3.Connection, path: Path, year: int | None) -> Pat
 
 
 def export_datev(con: sqlite3.Connection, path: Path, year: int) -> Path:
-    """DATEV-Buchungsstapel (EXTF, Version 700) – Ist-Prinzip: Zahlungseingänge Bank an Erlöse."""
+    """DATEV-Buchungsstapel (EXTF, Version 700) – Ist-Prinzip: Zahlungseingänge Bank an Erlöse.
+    Was über den Rechnungsbetrag hinaus gezahlt wird (Mahngebühren, Überzahlung), geht auf ein eigenes Konto."""
     bank = get_setting(con, "datev.konto_bank", "1200")
     erloes_ku = get_setting(con, "datev.konto_erloes", "8195")
+    sonstige = get_setting(con, "datev.konto_sonstige", "2700")
     berater = get_setting(con, "datev.berater", "1001")
     mandant = get_setting(con, "datev.mandant", "1")
     now = datetime.now()
@@ -108,14 +129,15 @@ def export_datev(con: sqlite3.Connection, path: Path, year: int) -> Path:
     w = csv.writer(buf, delimiter=";", quoting=csv.QUOTE_MINIMAL)
     w.writerow(header)
     w.writerow(cols)
-    sql = """SELECT p.pay_date, p.amount_cents, d.number, d.customer_id FROM payment p
-             JOIN document d ON d.id=p.document_id WHERE substr(p.pay_date,1,4)=? ORDER BY p.pay_date, p.id"""
-    for r in con.execute(sql, (f"{year:04d}",)):
-        amt = r["amount_cents"]
-        name = _customer_name(con, r["customer_id"])
-        w.writerow([f"{abs(amt) / 100:.2f}".replace(".", ","), "S" if amt > 0 else "H", "EUR", "", "", "",
-                    bank, erloes_ku, "", datetime.strptime(r["pay_date"], "%Y-%m-%d").strftime("%d%m"),
-                    r["number"][:36], "", "", f"Zahlung {r['number']} {name}"[:60]])
+    names = {r["id"]: _name(r) for r in con.execute("SELECT id, first_name, last_name, company FROM customer")}
+    for p in payments.payment_parts(con, year):
+        name = names.get(p["customer_id"], "")
+        for amt, konto, text in [(p["revenue_cents"], erloes_ku, "Zahlung"), (p["other_cents"], sonstige, "Mahngebühr/Überzahlung")]:
+            if not amt:
+                continue
+            w.writerow([f"{abs(amt) / 100:.2f}".replace(".", ","), "S" if amt > 0 else "H", "EUR", "", "", "",
+                        bank, konto, "", datetime.strptime(p["pay_date"], "%Y-%m-%d").strftime("%d%m"),
+                        p["number"][:36], "", "", f"{text} {p['number']} {name}"[:60]])
     Path(path).write_bytes(buf.getvalue().encode("cp1252", errors="replace"))
     return Path(path)
 
@@ -157,5 +179,6 @@ def export_gobd(con: sqlite3.Connection, path: Path) -> Path:
                 n += 1
             z.writestr(name, buf.getvalue().encode("utf-8-sig"))
             readme.append(f"{name}: {n} Datensätze; Spalten: {', '.join(cols)}")
+        readme += ["", audit.head(con)]
         z.writestr("LIESMICH.txt", "\n".join(readme))
     return Path(path)

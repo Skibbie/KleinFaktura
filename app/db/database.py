@@ -64,6 +64,8 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "backup.keep_daily": "30",
     "backup.keep_monthly": "12",
     "backup.last": "",
+    "backup.encrypt": "0",       # Sicherungen mit Passwort verschlüsseln (AES-256)
+    "backup.password": "",
     # E-Mail-Versand über Thunderbird (Pfad leer = automatisch suchen)
     "mail.thunderbird_path": "",
     "mail.subject_rechnung": "{belegart} {belegnr} vom {datum}",
@@ -84,6 +86,7 @@ DEFAULT_SETTINGS: dict[str, str] = {
     # DATEV (SKR03: 1200 Bank, 8195 Erlöse Kleinunternehmer)
     "datev.konto_bank": "1200",
     "datev.konto_erloes": "8195",
+    "datev.konto_sonstige": "2700",  # Mahngebühren / Überzahlungen (SKR03 Sonstige Erträge)
     "datev.berater": "1001",
     "datev.mandant": "1",
     # Branchenprofil (siehe PROFILES): Startartikel, Fahrtanlässe, Hottgenroth-Import
@@ -196,7 +199,12 @@ def init_db(con: sqlite3.Connection) -> None:
     is_new = not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'").fetchone()
     if current < SCHEMA_VERSION and not is_new:
         backup_before_upgrade(con, current)
-    con.executescript(SCHEMA_FILE.read_text(encoding="utf-8"))
+    schema = SCHEMA_FILE.read_text(encoding="utf-8")
+    # Schutz-Trigger und Sichten bei jedem Start aus der mitgelieferten Definition neu anlegen: so bleiben weder
+    # entschärfte gleichnamige Trigger (z.B. aus einer präparierten Sicherung) noch fremde Trigger/Sichten bestehen
+    for kind, name in con.execute("SELECT type, name FROM sqlite_master WHERE type IN ('trigger','view')").fetchall():
+        con.execute(f'DROP {kind.upper()} IF EXISTS "{name}"')
+    con.executescript(schema)
     if current < SCHEMA_VERSION:
         con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     with transaction(con):
@@ -314,6 +322,33 @@ def get_setting(con: sqlite3.Connection, key: str, default: str = "") -> str:
     if row is None or row[0] is None:
         return DEFAULT_SETTINGS.get(key, default)
     return row[0]
+
+
+def _parsed_setting(con: sqlite3.Connection, key: str, default: str, parse):
+    """Zahl aus einer Einstellung; unlesbare oder leere Werte (z.B. aus älteren Versionen ohne Prüfung) fallen auf
+    den Standardwert zurück, statt Belege, Sicherung oder Übersicht abstürzen zu lassen."""
+    try:
+        value = get_setting(con, key, default)
+        if not str(value).strip():
+            raise ValueError(key)
+        return parse(value)
+    except (ValueError, TypeError, ArithmeticError):
+        return parse(DEFAULT_SETTINGS.get(key, default))
+
+
+def get_int_setting(con: sqlite3.Connection, key: str, default: str = "0") -> int:
+    from app.money import input_decimal
+    return _parsed_setting(con, key, default, lambda v: int(input_decimal(v)))
+
+
+def get_cents_setting(con: sqlite3.Connection, key: str, default: str = "0") -> int:
+    from app.money import input_cents
+    return _parsed_setting(con, key, default, input_cents)
+
+
+def get_decimal_setting(con: sqlite3.Connection, key: str, default: str = "0"):
+    from app.money import input_decimal
+    return _parsed_setting(con, key, default, input_decimal)
 
 
 def set_setting(con: sqlite3.Connection, key: str, value: str) -> None:

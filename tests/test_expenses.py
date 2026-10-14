@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -59,7 +60,7 @@ def test_euer_values_and_lock(con, tmp_path):
     assert v["missing_receipts"] == 3   # telekom, bewirtung, afa (Fahrt braucht keinen Beleg)
     assert expenses.euer_values(con, 2027)["areas"][0].amount_cents == 40000   # AfA-Folgejahr
     assert Path(path).exists()
-    expenses.lock_year(con, 2026)
+    expenses.lock_year(con, 2026, today=date(2027, 1, 15))
     eid = expenses.list_expenses(con, 2026)[0]["id"]
     with pytest.raises(sqlite3.IntegrityError):
         expenses.delete_expense(con, eid)
@@ -151,7 +152,7 @@ def test_trips(con):
     assert log == ["create", "update", "create"]
 
     # Jahresabschluss sperrt auch Fahrten
-    expenses.lock_year(con, 2026)
+    expenses.lock_year(con, 2026, today=date(2027, 1, 15))
     with pytest.raises(sqlite3.IntegrityError):
         trips.delete_trip(con, t1)
     with pytest.raises(sqlite3.IntegrityError):

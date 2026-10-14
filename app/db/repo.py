@@ -113,6 +113,44 @@ def deactivate_customer(con: sqlite3.Connection, cid: int) -> None:
             audit.log(con, "delete", "customer", cid)
 
 
+ISO_COUNTRIES = set("""
+AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC
+CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE
+GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM
+KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ
+NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH
+SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG
+VI VN VU WF WS XK YE YT ZA ZM ZW""".split())
+_COUNTRY_NAMES = {
+    "deutschland": "DE", "germany": "DE", "d": "DE", "deu": "DE", "brd": "DE", "österreich": "AT", "oesterreich": "AT",
+    "austria": "AT", "a": "AT", "schweiz": "CH", "switzerland": "CH", "ch": "CH", "niederlande": "NL", "holland": "NL",
+    "netherlands": "NL", "belgien": "BE", "belgium": "BE", "frankreich": "FR", "france": "FR", "luxemburg": "LU",
+    "luxembourg": "LU", "dänemark": "DK", "daenemark": "DK", "denmark": "DK", "polen": "PL", "poland": "PL",
+    "tschechien": "CZ", "czechia": "CZ", "italien": "IT", "italy": "IT", "spanien": "ES", "spain": "ES",
+    "liechtenstein": "LI", "großbritannien": "GB", "grossbritannien": "GB", "vereinigtes königreich": "GB",
+    "united kingdom": "GB", "uk": "GB", "england": "GB", "schweden": "SE", "sweden": "SE", "norwegen": "NO",
+    "norway": "NO", "ungarn": "HU", "hungary": "HU", "slowenien": "SI", "kroatien": "HR", "portugal": "PT",
+    "irland": "IE", "ireland": "IE", "finnland": "FI", "finland": "FI", "griechenland": "GR", "greece": "GR",
+    "usa": "US", "vereinigte staaten": "US", "united states": "US", "türkei": "TR", "tuerkei": "TR", "turkey": "TR",
+}
+
+
+def country_code(value: str | None) -> str | None:
+    """Ländercode nach ISO 3166-1 (z.B. „Österreich“ → AT); leer → DE; unbekannt → None (nicht raten)."""
+    v = (value or "").strip()
+    if not v:
+        return "DE"
+    if v.upper() in ISO_COUNTRIES:
+        return v.upper()
+    return _COUNTRY_NAMES.get(v.lower())
+
+
+def reactivate_customer(con: sqlite3.Connection, cid: int) -> None:
+    with transaction(con):
+        con.execute("UPDATE customer SET active=1 WHERE id=?", (cid,))
+        audit.log(con, "reactivate", "customer", cid)
+
+
 def find_similar_customers(con: sqlite3.Connection, c: dict) -> list[dict]:
     """Mögliche Dubletten: gleicher Nachname/Firma und gleiche PLZ, oder gleiche E-Mail."""
     res = []

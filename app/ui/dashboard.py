@@ -105,6 +105,10 @@ class Dashboard(QWidget):
         self.empty = QLabel("Keine überfälligen Rechnungen.")
         self.empty.setObjectName("muted")
         lay.addWidget(self.empty)
+        self.credit_lbl = QLabel()
+        self.credit_lbl.setObjectName("warn")
+        self.credit_lbl.setWordWrap(True)
+        lay.addWidget(self.credit_lbl)
         self.backup_lbl = QLabel()
         self.backup_lbl.setWordWrap(True)
         lay.addWidget(self.backup_lbl)
@@ -117,7 +121,12 @@ class Dashboard(QWidget):
         con = self.ctx.con
         items = payments.open_items(con)
         od = [d for d in items if d["days_overdue"] > 0]
-        self.k_open.setText(fmt_eur(sum(d["open_cents"] for d in items)))
+        # Forderungen und Guthaben (Überzahlung, Erstattung nach Storno) nicht gegeneinander verrechnen
+        self.k_open.setText(fmt_eur(sum(d["open_cents"] for d in items if d["open_cents"] > 0)))
+        credit = -sum(d["open_cents"] for d in items if d["open_cents"] < 0)
+        self.credit_lbl.setText(f"Zu erstatten bzw. Guthaben von Kunden (Überzahlung, Storno): {fmt_eur(credit)} – "
+                                "siehe Offene Posten." if credit else "")
+        self.credit_lbl.setVisible(bool(credit))
         self.k_overdue.setText(fmt_eur(sum(d["open_cents"] for d in od)))
         self.k_overdue.setStyleSheet(f"color: {theme.SCALE[7]};" if od else "")
         y = date.today().year
@@ -136,7 +145,8 @@ class Dashboard(QWidget):
         warns = st.warnings()
         if get_setting(con, "tax.mode") != "kleinunternehmer":
             self.ku_warn.setObjectName("ok")
-            self.ku_warn.setText("Regelbesteuerung ist eingestellt. Die Grenzen sind hier nur zur Information.")
+            self.ku_warn.setText("Regelbesteuerung ist eingestellt (eingeschränkt unterstützt, siehe Einstellungen → "
+                                 "Steuer). Die Grenzen sind hier nur zur Information.")
         elif warns:
             self.ku_warn.setObjectName("warn")
             self.ku_warn.setText("<br>".join(warns))

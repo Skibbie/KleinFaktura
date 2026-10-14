@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from PySide6.QtCore import QLocale, Qt, QTimer  # noqa: E402
+from PySide6.QtCore import QLocale, QLockFile, Qt, QTimer  # noqa: E402
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox, QSplashScreen  # noqa: E402
 
@@ -38,6 +38,11 @@ def _excepthook(exc_type, exc, tb):
     _close_splash()
     msg = "".join(traceback.format_exception(exc_type, exc, tb))
     log = config.data_dir() / "fehler.log"
+    try:   # begrenzt halten (kann Kundendaten aus Fehlermeldungen enthalten): ab 1 MB eine Vorgängerdatei
+        if log.exists() and log.stat().st_size > 1024 * 1024:
+            log.replace(log.with_suffix(".log.1"))
+    except OSError:
+        pass
     with open(log, "a", encoding="utf-8") as f:
         f.write(msg + "\n")
     QMessageBox.critical(None, "Unerwarteter Fehler", f"{exc}\n\nDetails in {log}")
@@ -85,6 +90,15 @@ def main() -> int:
     QLocale.setDefault(QLocale(QLocale.German, QLocale.Germany))
     app = QApplication(sys.argv)
     app.setApplicationName(config.APP_NAME)
+    # nur eine Instanz je Datenordner: zwei Fenster auf derselben Datenbank überschreiben sich gegenseitig
+    # (Einstellungen, Entwürfe) und blockieren die Rücksicherung
+    lock = QLockFile(str(config.data_dir() / f"{config.APP_NAME}.lock"))
+    lock.setStaleLockTime(0)   # nach einem Absturz verwaiste Sperre wird erkannt (Prozess läuft nicht mehr)
+    if not lock.tryLock(200):
+        _close_splash()
+        QMessageBox.information(None, config.APP_NAME, f"{config.APP_NAME} ist bereits geöffnet.\n\n"
+                                                       "Bitte das vorhandene Fenster in der Taskleiste verwenden.")
+        return 0
     splash = None
     if pyi_splash is None:   # Quellcode-Start; in der Exe steht das Startbild schon
         splash = QSplashScreen(splash_pixmap(), Qt.WindowStaysOnTopHint)

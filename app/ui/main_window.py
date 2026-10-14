@@ -257,8 +257,11 @@ class MainWindow(QMainWindow):
             try:
                 if backup.needs_daily_backup(self.ctx.con):
                     QApplication.setOverrideCursor(Qt.WaitCursor)
-                    backup.create_backup(self.ctx.con)
+                    zpath = backup.create_backup(self.ctx.con)
                     QApplication.restoreOverrideCursor()
+                    notice = backup.fallback_notice(self.ctx.con, zpath)
+                    if notice:
+                        QMessageBox.information(self, "Datensicherung", notice)
             except Exception as e:  # noqa: BLE001
                 QApplication.restoreOverrideCursor()
                 r = QMessageBox.warning(self, "Datensicherung", f"Automatische Sicherung fehlgeschlagen:\n{e}\n\nTrotzdem beenden?",

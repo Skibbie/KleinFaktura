@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QColor, QFont, QPalette
-from PySide6.QtWidgets import (QApplication, QColorDialog, QDialog, QFileDialog, QFontDialog, QInputDialog,
-                               QMessageBox, QProgressDialog)
+from PySide6.QtWidgets import (QAbstractScrollArea, QAbstractSpinBox, QApplication, QColorDialog, QComboBox, QDialog,
+                               QFileDialog, QFontDialog, QInputDialog, QMessageBox, QProgressDialog, QWidget)
 
 from app import config
 
@@ -59,6 +59,31 @@ class _MaximizeDialogs(QObject):
 _max_filter = None
 
 
+class _WheelGuard(QObject):
+    """Mausrad ändert Auswahl-, Datums- und Zahlenfelder nur, wenn sie angeklickt (fokussiert) sind. Sonst scrollt es
+    die Seite weiter – beim Scrollen durch den Beleg-Editor sprangen sonst Kunde, Besteuerung oder Datum um."""
+
+    def eventFilter(self, obj, ev):
+        if ev.type() != QEvent.Wheel or not isinstance(obj, QWidget):
+            return False
+        field = obj
+        while field is not None and not isinstance(field, (QComboBox, QAbstractSpinBox)):
+            field = field.parentWidget() if field.parentWidget() is not None and not field.isWindow() else None
+            if field is not None and isinstance(field, QAbstractScrollArea):
+                return False   # Rad innerhalb einer Liste/Tabelle: normal scrollen
+        if field is None or field.hasFocus() or (field.focusProxy() and field.focusProxy().hasFocus()):
+            return False
+        area = field.parentWidget()
+        while area is not None and not isinstance(area, QAbstractScrollArea):
+            area = area.parentWidget()
+        if area is not None:
+            QApplication.sendEvent(area.verticalScrollBar(), ev)
+        return True
+
+
+_wheel_guard = None
+
+
 _translator = None
 
 
@@ -73,9 +98,12 @@ def _load_german(app: QApplication) -> None:
 
 
 def apply(app: QApplication) -> None:
-    global _max_filter
+    global _max_filter, _wheel_guard
     if _translator is None:
         _load_german(app)
+    if _wheel_guard is None:
+        _wheel_guard = _WheelGuard(app)
+        app.installEventFilter(_wheel_guard)
     if _max_filter is None:
         _max_filter = _MaximizeDialogs(app)
         app.installEventFilter(_max_filter)
@@ -139,6 +167,8 @@ QPushButton[primary="true"] {{ background: {ACTION}; color: #FFFFFF; border: 1px
 QPushButton[primary="true"]:hover {{ background: {ACTION_HOVER}; border-color: {ACTION_HOVER}; color: #FFFFFF; }}
 QPushButton[danger="true"] {{ color: {DANGER}; }}
 QPushButton[danger="true"]:hover {{ border-color: {DANGER}; color: {DANGER}; }}
+QPushButton[danger="true"]:disabled {{ color: #C9A5A2; background: {SUNK}; border-color: {LINE_SOFT}; }}
+QPushButton[primary="true"]:disabled {{ color: #E8EFED; background: #8FB0A5; border-color: #8FB0A5; }}
 
 /* Eingaben */
 QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QDateEdit, QSpinBox, QDoubleSpinBox {{

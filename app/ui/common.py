@@ -181,10 +181,18 @@ def searchable_combo(cb: QComboBox) -> QComboBox:
     le.installEventFilter(_SearchComboClick(cb))
 
     def finished():
-        if not le.text().strip():
-            cb.setCurrentIndex(0)
-            cb.setEditText(cb.itemText(0))
-    le.editingFinished.connect(finished)
+        text = le.text().strip()
+        if text == cb.itemText(cb.currentIndex()):
+            return
+        # Eingetippter Text, ohne einen Eintrag zu wählen: eindeutigen Treffer übernehmen, sonst „keine Auswahl“ –
+        # nie stillschweigend den vorher gewählten Eintrag behalten, während das Feld etwas anderes zeigt
+        hits = [i for i in range(1, cb.count()) if text and text.lower() in cb.itemText(i).lower()]
+        exact = [i for i in hits if cb.itemText(i).lower() == text.lower()]
+        pick = exact[0] if exact else hits[0] if len(hits) == 1 else 0
+        cb.setCurrentIndex(pick)
+        cb.setEditText(cb.itemText(pick))
+    # verzögert: erst übernimmt Qt eine Auswahl aus der Vorschlagsliste, dann wird geprüft
+    le.editingFinished.connect(lambda: QTimer.singleShot(0, finished))
     return cb
 
 
@@ -226,13 +234,35 @@ def set_date(de: QDateEdit, iso: str | None) -> None:
 
 
 def open_file(path) -> None:
+    from app import config
+    path = config.resolve_stored_path(path) or path
+    if path and not os.path.isdir(path) and config.is_risky_file(path):
+        # nie ein Programm/Skript starten, auch wenn ein (manipulierter) Belegpfad darauf zeigt
+        QMessageBox.warning(None, "Datei nicht geöffnet", f"Diese Datei wird aus Sicherheitsgründen nicht geöffnet, "
+                                                          f"weil Windows sie ausführen würde:\n{path}")
+        return
     if path and os.path.exists(path):
-        os.startfile(str(path))  # noqa: S606 (Windows)
+        try:
+            os.startfile(str(path))  # noqa: S606 (Windows)
+        except OSError as e:
+            QMessageBox.warning(None, "Datei öffnen", f"Die Datei konnte nicht geöffnet werden – ist ein passendes "
+                                                      f"Programm (z.B. ein PDF-Betrachter) installiert?\n{path}\n\n{e}")
     else:
         QMessageBox.warning(None, "Datei fehlt", f"Die Datei wurde nicht gefunden:\n{path}")
 
 
+def count(n: int, one: str, many: str) -> str:
+    """Anzahl mit passender Einzahl/Mehrzahl: „1 Ausgabe“, „3 Ausgaben“."""
+    return f"{n} {one if n == 1 else many}"
+
+
 def error(parent, title: str, exc_or_msg) -> None:
+    if isinstance(exc_or_msg, PermissionError):
+        # typisch: Exportdatei ist noch in Excel geöffnet, oder ein Ordner ist schreibgeschützt
+        name = getattr(exc_or_msg, "filename", None) or ""
+        exc_or_msg = (f"Auf die Datei kann nicht geschrieben werden – ist sie noch in einem anderen Programm "
+                      f"(z.B. Excel oder einem PDF-Betrachter) geöffnet? Bitte schließen oder einen anderen "
+                      f"Dateinamen wählen.\n\n{name}")
     QMessageBox.critical(parent, title, str(exc_or_msg))
 
 

@@ -11,9 +11,9 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QCompleter, QDialog, QDialo
 
 from app.db import repo
 from app.db.database import get_setting
-from app.money import fmt_date, fmt_eur, to_decimal
+from app.money import fmt_date, fmt_eur, input_decimal, to_decimal
 from app.services import expenses, trips
-from app.ui.common import (Ctx, GuardedDialog, button, confirm, date_edit, date_value, error, hbox, item, make_table,
+from app.ui.common import (Ctx, GuardedDialog, button, confirm, count, date_edit, date_value, error, hbox, item, make_table,
                            open_file, page_title, searchable_combo, selected_data)
 
 
@@ -199,7 +199,7 @@ class TripDialog(GuardedDialog, QDialog):
 
     def _update_calc(self, *_):
         try:
-            km = trips.total_km(self.km_one_way.text() or "0", self.round_trip.isChecked())
+            km = trips.total_km(input_decimal(self.km_one_way.text() or "0"), self.round_trip.isChecked())
             rate = self.trip.get("rate") or trips.current_rate(self.ctx.con)
             txt = (f"{trips.fmt_km(km)} km × {trips.fmt_rate(rate)} € = {fmt_eur(trips.amount_cents(km, rate))}"
                    if km else "")
@@ -216,7 +216,7 @@ class TripDialog(GuardedDialog, QDialog):
              "destination": self.destination.text(), "purpose": self.purpose.currentText(),
              "round_trip": self.round_trip.isChecked(), "rate": self.trip.get("rate"), "note": self.note.toPlainText()}
         try:
-            d["km_one_way"] = str(to_decimal(self.km_one_way.text() or "0"))
+            d["km_one_way"] = str(input_decimal(self.km_one_way.text() or "0"))
             self.trip_id = trips.save_trip(self.ctx.con, d)
             if self.remember_purpose.isChecked():
                 repo.remember_text(self.ctx.con, trips.PURPOSE_CATEGORY, d["purpose"])
@@ -278,7 +278,7 @@ class TripsPage(QWidget):
             total += t["amount_cents"]
             km += to_decimal(t["km"])
         period = self.year.currentText() if y else "alle Jahre"
-        self.sum_label.setText(f"{len(rows)} Fahrten {period}, {trips.fmt_km(km)} km, {fmt_eur(total)}")
+        self.sum_label.setText(f"{count(len(rows), 'Fahrt', 'Fahrten')} {period}, {trips.fmt_km(km)} km, {fmt_eur(total)}")
         hint = ""
         if y:
             missing = trips.invoices_without_trip(self.ctx.con, y)

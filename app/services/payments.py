@@ -7,7 +7,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from app.db import repo
-from app.db.database import get_setting, transaction
+from app.db.database import get_cents_setting, get_int_setting, transaction
 from app.money import fmt_date, fmt_eur, to_cents
 from app.services import audit, documents
 
@@ -18,11 +18,42 @@ def paid_cents(con: sqlite3.Connection, doc_id: int) -> int:
     return con.execute("SELECT COALESCE(SUM(amount_cents),0) FROM payment WHERE document_id=?", (doc_id,)).fetchone()[0]
 
 
+def fees_cents(con: sqlite3.Connection, doc_id: int) -> int:
+    return con.execute("SELECT COALESCE(SUM(fee_cents),0) FROM dunning WHERE document_id=?", (doc_id,)).fetchone()[0]
+
+
 def open_amount(con: sqlite3.Connection, doc_id: int) -> int:
     d = documents.get_document(con, doc_id)
-    if not d or d["doc_type"] != "rechnung" or d["status"] != "festgeschrieben" or documents.is_cancelled(con, doc_id):
+    if not d:
         return 0
-    return int(d["total_gross_cents"]) - paid_cents(con, doc_id)
+    return documents.open_cents({**d, "paid_cents": paid_cents(con, doc_id), "fees_cents": fees_cents(con, doc_id),
+                                 "storno_number": documents.is_cancelled(con, doc_id)})
+
+
+def payment_parts(con: sqlite3.Connection, year: int | None = None) -> list[dict]:
+    """Zahlungen mit Aufteilung in Rechnungsentgelt (`revenue_cents`) und Rest (`other_cents`: Mahngebühren bzw.
+    Überzahlung). Je Rechnung kumulativ in Zahlungsreihenfolge über alle Jahre gerechnet, damit z.B. eine
+    Gebührenzahlung im Folgejahr nicht als Umsatz zählt; Rückzahlungen (negativ) laufen durch dieselbe Rechnung."""
+    rows = con.execute(
+        "SELECT p.*, d.number, d.customer_id, d.total_gross_cents, d.total_net_cents FROM payment p "
+        "JOIN document d ON d.id=p.document_id "
+        "ORDER BY p.document_id, p.pay_date, p.id").fetchall()
+    out, cum, doc = [], 0, None
+    for r in rows:
+        if r["document_id"] != doc:
+            doc, cum = r["document_id"], 0
+        gross = int(r["total_gross_cents"] or 0)
+        clamp = (lambda v: min(max(v, 0), gross)) if gross >= 0 else (lambda v: max(min(v, 0), gross))
+        revenue = clamp(cum + r["amount_cents"]) - clamp(cum)
+        cum += r["amount_cents"]
+        if year is None or r["pay_date"][:4] == f"{year:04d}":
+            # Entgelt ohne Umsatzsteuer (§ 10 Abs. 1 UStG): bei Regel-Rechnungen anteilig netto
+            net = int(r["total_net_cents"] or 0)
+            revenue_net = round(revenue * net / gross) if gross and net != gross else revenue
+            out.append({**dict(r), "revenue_cents": revenue, "revenue_net_cents": revenue_net,
+                        "other_cents": r["amount_cents"] - revenue})
+    out.sort(key=lambda p: (p["pay_date"], p["id"]))
+    return out
 
 
 def list_payments(con: sqlite3.Connection, doc_id: int | None = None) -> list[dict]:
@@ -55,7 +86,8 @@ def open_items(con: sqlite3.Connection) -> list[dict]:
     today = date.today()
     for d in items:
         due = d.get("due_date")
-        d["days_overdue"] = (today - date.fromisoformat(due)).days if due and due < today.isoformat() else 0
+        # nur echte Forderungen können überfällig sein; Guthaben/Erstattungen (negativ) nie
+        d["days_overdue"] = (today - date.fromisoformat(due)).days if d["open_cents"] > 0 and due and due < today.isoformat() else 0
     items.sort(key=lambda x: (x.get("due_date") or "9999"))
     return items
 
@@ -79,11 +111,11 @@ def create_dunning(con: sqlite3.Connection, doc_id: int, level: int | None = Non
         raise ValueError("Rechnung ist nicht offen.")
     level = level or next_dunning_level(con, doc_id)
     if fee_cents is None:
-        fee_cents = to_cents(get_setting(con, f"dunning.fee_{level}", "0"))
-    days = days if days is not None else int(get_setting(con, "dunning.days", "10"))
+        fee_cents = get_cents_setting(con, f"dunning.fee_{level}", "0")
+    days = days if days is not None else get_int_setting(con, "dunning.days", "10")
     today = date.today()
     new_due = today + timedelta(days=days)
-    prev_fees = con.execute("SELECT COALESCE(SUM(fee_cents),0) FROM dunning WHERE document_id=?", (doc_id,)).fetchone()[0]
+    prev_fees = fees_cents(con, doc_id)
     total = open_ + prev_fees + fee_cents
     values = documents.placeholders(con, inv, extra={
         "offen": fmt_eur(open_),
@@ -93,7 +125,13 @@ def create_dunning(con: sqlite3.Connection, doc_id: int, level: int | None = Non
         "rechnungsnr": inv["number"],
         "rechnungsdatum": fmt_date(inv["doc_date"]),
     })
-    body = documents.render(text if text is not None else repo.default_text(con, f"mahnung{level}"), values)
+    if text is None:
+        text = repo.default_text(con, f"mahnung{level}")
+    if not (text or "").strip():
+        # Baustein gelöscht/leer: Standardtext statt einer (unlöschbaren) Mahnung ohne Text
+        from app.db.database import DEFAULT_TEXTBLOCKS
+        text = next(body for cat, _t, body, _d in DEFAULT_TEXTBLOCKS if cat == f"mahnung{level}")
+    body = documents.render(text, values)
     cust = repo.get_customer(con, inv["customer_id"]) or {}
     import json
     recipient = json.loads(inv["recipient_json"]) if inv.get("recipient_json") else {"lines": repo.recipient_lines(cust)}
@@ -118,19 +156,28 @@ def create_dunning(con: sqlite3.Connection, doc_id: int, level: int | None = Non
     }
     path = documents.archive_path_for(f"{inv['number']}-M{level}-{today.strftime('%Y%m%d')}", today.isoformat(), "rechnung")
     path = path.with_name(path.name.replace("Rechnung-", f"{DUNNING_LABEL[level].replace(' ', '').replace('.', '')}-"))
+    # Archivierte Mahnungen nie überschreiben (z.B. zweite 2. Mahnung am selben Tag): freien Namen suchen
+    base, k = path, 2
+    while path.exists():
+        path = base.with_name(f"{base.stem}-{k}{base.suffix}")
+        k += 1
     try:
         pdf_writer(data, path)
         h = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        with transaction(con):
+            cur = con.execute(
+                "INSERT INTO dunning(document_id, level, dunning_date, new_due_date, fee_cents, open_cents, pdf_path, pdf_sha256)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (doc_id, level, today.isoformat(), new_due.isoformat(), fee_cents, open_, str(path), h),
+            )
+            audit.log(con, "dunning", "document", doc_id, {"level": level, "fee": fee_cents, "open": open_, "pdf_sha256": h})
     except BaseException:
         Path(path).unlink(missing_ok=True)
         raise
-    with transaction(con):
-        cur = con.execute(
-            "INSERT INTO dunning(document_id, level, dunning_date, new_due_date, fee_cents, open_cents, pdf_path, pdf_sha256)"
-            " VALUES (?,?,?,?,?,?,?,?)",
-            (doc_id, level, today.isoformat(), new_due.isoformat(), fee_cents, open_, str(path), h),
-        )
-        audit.log(con, "dunning", "document", doc_id, {"level": level, "fee": fee_cents, "open": open_, "pdf_sha256": h})
+    try:
+        path.chmod(0o444)  # schreibgeschützt wie das Beleg-Archiv
+    except OSError:
+        pass
     return {"id": cur.lastrowid, "path": path, "level": level}
 
 

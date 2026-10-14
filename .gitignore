@@ -14,3 +14,7 @@ dist/
 *.sqlite3-shm
 fehler.log
 archiv/
+
+# Update-Signatur: nie einchecken
+SHA256SUMS.txt*
+*Signaturschluessel*

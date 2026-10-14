@@ -29,7 +29,8 @@
 3. **Rechnung erstellen** – Entwurf ohne Nummer; Entwürfe sind änderbar und löschbar.
 4. **Festschreiben** – vergibt die fortlaufende Nummer `JJJJ-MMNN` (Zähler je Monat), prüft die
    Pflichtangaben nach § 14 UStG, erzeugt das PDF (optional mit ZUGFeRD-XML) und speichert dessen SHA-256-Prüfsumme.
-   Ab diesem Zeitpunkt ist der Beleg technisch unveränderbar.
+   Ab diesem Zeitpunkt lässt sich der Beleg im Programm nicht mehr ändern oder löschen (siehe Abschnitt 3 zur
+   Schutzwirkung).
 5. **Versand** – […per E-Mail als PDF / Post…]. Versanddatum wird […wo?…] dokumentiert.
 6. **Zahlungseingang** – Erfassung in „Offene Posten“ (Datum, Betrag, Art). Zahlungen sind unveränderbar;
    Fehler werden mit einer Korrekturbuchung (negativer Betrag) berichtigt.
@@ -40,7 +41,7 @@
 9. **Ausgaben** – Erfassung im Ausgabenbuch (Datum, Lieferant, Kategorie, Bruttobetrag) mit Beleg; der Beleg
    wird unverändert und schreibgeschützt mit SHA-256-Prüfsumme archiviert (`archiv\ausgaben\JJJJ\`).
    Änderungen und Löschungen werden mit altem und neuem Wert protokolliert. Nach Abgabe der Steuererklärung
-   wird das Jahr abgeschlossen; danach sind die Ausgaben dieses Jahres technisch unveränderbar.
+   wird das Jahr abgeschlossen; danach lassen sich die Ausgaben dieses Jahres im Programm nicht mehr ändern.
    Papierbelege werden […aufbewahrt / gescannt, Scanvorgang beschreiben…].
 10. **Fahrten** – Betriebliche Fahrten mit dem privaten Pkw werden zeitnah im Reiter „Fahrten“ erfasst
    (Datum, Kunde/Objekt, Zieladresse, Anlass, gefahrene Kilometer, ggf. zugehöriges Angebot/Rechnung).
@@ -56,9 +57,17 @@
 - Datenbank: SQLite, lokal unter `%LOCALAPPDATA%\KleinFaktura\faktura.sqlite3`.
 - Belegarchiv: `%LOCALAPPDATA%\KleinFaktura\archiv\JJJJ\` (PDF/XML, schreibgeschützt), Importe unter `archiv\import\`.
 - Unveränderbarkeit: Datenbank-Trigger verhindern Änderung/Löschung festgeschriebener Belege, Positionen,
-  Zahlungen, Mahnungen und Protokolleinträge; Nummernkreise können nicht zurückgesetzt werden.
+  Zahlungen, Mahnungen und Protokolleinträge; Nummernkreise können nicht zurückgesetzt werden. Die Trigger
+  werden bei jedem Programmstart aus der mitgelieferten Definition neu angelegt.
 - Protokoll: jede relevante Aktion wird in einem Änderungsprotokoll mit Hash-Kette (SHA-256) festgehalten;
-  „Integrität prüfen“ erkennt nachträgliche Änderungen an Protokoll und Archivdateien.
+  „Integrität prüfen“ erkennt nachträgliche Änderungen an Protokoll und Archivdateien. Anzahl der Einträge und
+  letzter Hash (Kettenkopf) werden in jeder Datensicherung (`INFO.txt`) und im GoBD-Datenexport festgehalten;
+  ein Abgleich mit älteren Sicherungen macht auch das Entfernen der letzten Einträge erkennbar.
+- **Grenzen der Schutzwirkung**: Die Sperren wirken gegen Änderungen über das Programm. Wer direkten
+  Schreibzugriff auf Datenbank und Archivordner hat, kann sie mit Fachkenntnis umgehen (Schreibschutz ist ein
+  Dateiattribut, Prüfsummen und Hash-Kette liegen in derselben Datenbank). Solche Eingriffe sind nur teilweise
+  erkennbar. Ergänzende organisatorische Maßnahmen: Zugriff auf das Windows-Benutzerkonto beschränken,
+  Datensicherungen getrennt und unveränderbar aufbewahren (z.B. externer Datenträger, Versionierung).
 - E-Rechnung: ZUGFeRD/Factur-X Profil EN 16931 (CII), eingebettet in PDF/A-3, XSD-geprüft.
 
 ## 4. Betriebsdokumentation

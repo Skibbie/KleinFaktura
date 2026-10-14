@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
+from app import config
 from app.db import repo
 from app.db.database import get_setting, transaction
 from app.services import audit
@@ -26,20 +27,35 @@ class MailError(Exception):
 
 
 def document_pdf(doc: dict) -> Path | None:
-    """Das Archiv-PDF eines festgeschriebenen (oder importierten) Belegs."""
-    p = doc.get("pdf_path") or doc.get("import_file_path")
-    return Path(p) if p and doc.get("status") == "festgeschrieben" else None
+    """Das Archiv-PDF eines festgeschriebenen Belegs. Importierte Altbelege haben nur dann eins, wenn die
+    Originaldatei ein PDF war (sonst ist pdf_path leer und die .ods/.xlsx-Datei wird nicht als PDF versendet)."""
+    if doc.get("status") != "festgeschrieben":
+        return None
+    return config.resolve_stored_path(doc.get("pdf_path"))
 
 
 def _template_kind(doc: dict) -> str:
     return "angebot" if doc["doc_type"] == "angebot" else "rechnung"
 
 
+def valid_thunderbird_path(path: str) -> bool:
+    """Nur eine Datei namens thunderbird.exe außerhalb des Datenordners, kein Netzwerkpfad – ein manipulierter Pfad
+    (z.B. aus einer präparierten Sicherung) soll kein beliebiges Programm starten können."""
+    p = Path(path)
+    if p.name.lower() != "thunderbird.exe" or config.is_unc(path):
+        return False
+    try:
+        p.resolve().relative_to(config.data_dir().resolve())
+        return False
+    except ValueError:
+        return True
+
+
 def find_thunderbird(con: sqlite3.Connection) -> Path | None:
     """Einstellung > Registry (App Paths) > Standard-Installationsordner."""
     own = get_setting(con, "mail.thunderbird_path").strip().strip('"')
     if own:
-        return Path(own) if Path(own).is_file() else None
+        return Path(own) if valid_thunderbird_path(own) and Path(own).is_file() else None
     try:
         import winreg
         for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
@@ -83,6 +99,9 @@ def _launch(args: list[str]) -> None:
 def open_compose(con: sqlite3.Connection, doc: dict) -> str:
     """Öffnet Thunderbird mit vorausgefüllter Mail und PDF-Anhang. Gibt den Empfänger zurück (ggf. leer)."""
     pdf = document_pdf(doc)
+    if not pdf and doc.get("status") == "festgeschrieben":
+        raise MailError("Zu diesem importierten Beleg gibt es kein PDF (die Originaldatei ist eine Tabelle). "
+                        "Bitte die Rechnung als PDF exportieren und selbst anhängen.")
     if not pdf:
         raise MailError("Nur festgeschriebene Belege können versendet werden.")
     if not pdf.exists():
@@ -105,6 +124,9 @@ def export_copy(con: sqlite3.Connection, doc: dict) -> Path | None:
     if get_setting(con, "pdf.export_auto") != "1" or not target_dir or not pdf:
         return None
     target_dir = Path(target_dir)
+    if config.inside_archive(target_dir):
+        raise ValueError("Der PDF-Ordner liegt im Beleg-Archiv. Bitte unter Einstellungen → E-Mail & PDF-Ablage "
+                         "einen Ordner außerhalb wählen – das Archiv bleibt unverändert.")
     if get_setting(con, "pdf.export_year_dirs") == "1":
         target_dir = target_dir / (doc.get("doc_date") or "")[:4]
     target_dir.mkdir(parents=True, exist_ok=True)

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from app import config
 from app.db import repo
-from app.db.database import company, dumps, get_setting, row_to_dict, transaction
+from app.db.database import company, dumps, get_int_setting, get_setting, row_to_dict, transaction
 from app.money import fmt_date, fmt_eur, line_total_cents, to_decimal
 from app.services import audit, numbering
 
@@ -47,6 +47,7 @@ def list_documents(con: sqlite3.Connection, doc_types: tuple[str, ...] | None = 
                     (SELECT s.number FROM document s WHERE s.ref_document_id=d.id AND s.doc_type='storno'
                         AND s.status='festgeschrieben' LIMIT 1) AS storno_number,
                     (SELECT MAX(level) FROM dunning m WHERE m.document_id=d.id) AS dunning_level,
+                    (SELECT COALESCE(SUM(fee_cents),0) FROM dunning f WHERE f.document_id=d.id) AS fees_cents,
                     (SELECT r.number FROM document r WHERE r.ref_document_id=d.id AND r.doc_type='rechnung'
                         LIMIT 1) AS converted
              FROM document d LEFT JOIN customer c ON c.id=d.customer_id WHERE 1=1"""
@@ -72,9 +73,17 @@ def list_documents(con: sqlite3.Connection, doc_types: tuple[str, ...] | None = 
 
 
 def open_cents(d: dict) -> int:
-    if d["doc_type"] != "rechnung" or d["status"] != "festgeschrieben" or d.get("storno_number"):
+    """Offener Rechnungsbetrag. Mahngebühren gehören nicht zur Rechnung: Was über den Rechnungsbetrag hinaus gezahlt
+    wird, gleicht zuerst die Gebühren aus; erst der Rest ist eine Überzahlung (negativ)."""
+    if d["doc_type"] != "rechnung" or d["status"] != "festgeschrieben":
         return 0
-    return int(d.get("total_gross_cents") or 0) - int(d.get("paid_cents") or 0)
+    if d.get("storno_number"):
+        # storniert: bereits Gezahltes ist dem Kunden zu erstatten (negativ), bis die Rückzahlung erfasst ist
+        return -max(int(d.get("paid_cents") or 0), 0)
+    open_ = int(d.get("total_gross_cents") or 0) - int(d.get("paid_cents") or 0)
+    if open_ < 0:
+        open_ = min(0, open_ + int(d.get("fees_cents") or 0))
+    return open_
 
 
 def status_label(d: dict) -> str:
@@ -121,11 +130,6 @@ def compute_totals(lines: list[dict], tax_mode: str) -> dict:
 
 
 # ---------------------------------------------------------------- Platzhalter
-class _SafeDict(dict):
-    def __missing__(self, key):
-        return "{" + key + "}"
-
-
 def placeholders(con: sqlite3.Connection, doc: dict, number: str | None = None, extra: dict | None = None) -> dict:
     comp = company(con)
     cust = repo.get_customer(con, doc["customer_id"]) if doc.get("customer_id") else {}
@@ -135,7 +139,7 @@ def placeholders(con: sqlite3.Connection, doc: dict, number: str | None = None, 
     d = {
         "briefanrede": (cust or {}).get("letter_salutation") or repo.default_letter_salutation(cust or {}),
         "kunde": repo.customer_display_name(cust or {}),
-        "zahlungsziel": get_setting(con, "invoice.payment_days"),
+        "zahlungsziel": str(get_int_setting(con, "invoice.payment_days", "14")),
         "faellig": fmt_date(doc.get("due_date")),
         "gueltig_bis": fmt_date(doc.get("valid_until")),
         "datum": fmt_date(doc.get("doc_date")),
@@ -156,8 +160,16 @@ def placeholders(con: sqlite3.Connection, doc: dict, number: str | None = None, 
     return d
 
 
+_PLACEHOLDER = re.compile(r"\{(\w+)\}")
+
+
 def render(text: str, values: dict) -> str:
-    return (text or "").format_map(_SafeDict(values)) if "{" in (text or "") else (text or "")
+    """Ersetzt bekannte {platzhalter}; alles andere (unbekannte Namen, einzelne Klammern) bleibt unverändert stehen.
+    Bewusst kein str.format: frei bearbeitbare Texte mit „{“ oder „}“ dürfen Vorschau und Festschreiben nicht abbrechen."""
+    text = text or ""
+    if "{" not in text:
+        return text
+    return _PLACEHOLDER.sub(lambda m: str(values[m[1]]) if m[1] in values else m[0], text)
 
 
 # ---------------------------------------------------------------- Entwürfe
@@ -172,9 +184,9 @@ def new_draft(con: sqlite3.Connection, doc_type: str, customer_id: int | None = 
         "doc_date": today.isoformat(),
         "service_date": today.isoformat() if doc_type != "angebot" else None,
         "service_date_to": None,
-        "due_date": (today + timedelta(days=int(get_setting(con, "invoice.payment_days", "14")))).isoformat()
+        "due_date": (today + timedelta(days=get_int_setting(con, "invoice.payment_days", "14"))).isoformat()
         if doc_type == "rechnung" else None,
-        "valid_until": (today + timedelta(days=int(get_setting(con, "offer.valid_days", "30")))).isoformat()
+        "valid_until": (today + timedelta(days=get_int_setting(con, "offer.valid_days", "30"))).isoformat()
         if doc_type == "angebot" else None,
         "subject": "",
         "salutation_text": repo.default_text(con, "anrede"),
@@ -184,8 +196,8 @@ def new_draft(con: sqlite3.Connection, doc_type: str, customer_id: int | None = 
         if doc_type != "storno" else "",
         "notes_text": _default_notes(con, tax_mode, doc_type),
         "tax_mode": tax_mode,
-        "zugferd": int(get_setting(con, "invoice.zugferd_default", "0")) if doc_type != "angebot" else 0,
-        "girocode": int(get_setting(con, "invoice.girocode", "1")) if doc_type == "rechnung" else 0,
+        "zugferd": get_int_setting(con, "invoice.zugferd_default", "0") if doc_type != "angebot" else 0,
+        "girocode": get_int_setting(con, "invoice.girocode", "1") if doc_type == "rechnung" else 0,
         "ref_document_id": None,
     }
     gruss = repo.default_text(con, "gruss")
@@ -244,6 +256,11 @@ def delete_draft(con: sqlite3.Connection, doc_id: int) -> None:
         d = get_document(con, doc_id)
         if not d or d["status"] != "entwurf":
             raise ValueError("Nur Entwürfe können gelöscht werden.")
+        refs = con.execute("SELECT doc_type, number FROM document WHERE ref_document_id=?", (doc_id,)).fetchall()
+        if refs:
+            names = ", ".join(f"{DOC_TYPE_LABEL[r['doc_type']]} {r['number'] or '(Entwurf)'}" for r in refs)
+            raise ValueError(f"Dieser Entwurf kann nicht gelöscht werden, weil daraus bereits ein Beleg erstellt "
+                             f"wurde: {names}. Bitte zuerst diesen Entwurf löschen.")
         con.execute("DELETE FROM document_line WHERE document_id=?", (doc_id,))
         con.execute("DELETE FROM document WHERE id=?", (doc_id,))
         audit.log(con, "delete_draft", "document", doc_id)
@@ -255,10 +272,19 @@ def copy_as_draft(con: sqlite3.Connection, src_id: int, doc_type: str | None = N
     target_type = doc_type or src["doc_type"]
     doc = new_draft(con, target_type, src["customer_id"], src["project_id"])
     doc["subject"] = src["subject"]
-    doc["tax_mode"] = src["tax_mode"]
+    if src["doc_type"] == "storno":
+        # korrigierte Neuausstellung einer stornierten Rechnung: Besteuerung der Ursprungsrechnung beibehalten
+        doc["tax_mode"] = src["tax_mode"]
+        doc["notes_text"] = _default_notes(con, src["tax_mode"], target_type)
+    # sonst gilt die aktuell eingestellte Besteuerung (aus new_draft) samt passendem Hinweistext – ein Angebot aus
+    # der Zeit vor einem Wechsel ergibt keine Rechnung mit widersprüchlichem Steuerhinweis
     if target_type == "rechnung" and src["doc_type"] == "angebot":
         doc["ref_document_id"] = src_id
     lines = [{k: ln[k] for k in LINE_FIELDS} for ln in get_lines(con, src_id)]
+    if src["doc_type"] == "storno" and target_type != "storno":
+        # Storno hat negierte Mengen; die Kopie als Rechnung (z.B. korrigierte Neuausstellung) wieder positiv
+        for ln in lines:
+            ln["quantity"] = str(-to_decimal(ln["quantity"]))
     return save_draft(con, doc, lines)
 
 
@@ -271,8 +297,11 @@ def validate(con: sqlite3.Connection, doc: dict, lines: list[dict]) -> list[str]
             problems.append(f"{label} fehlt (Einstellungen → Firma).")
     if doc["doc_type"] != "angebot" and not (comp.get("tax_number") or comp.get("vat_id")):
         problems.append("Steuernummer oder USt-IdNr. fehlt (Einstellungen → Firma).")
+    ref = get_document(con, doc["ref_document_id"]) if doc.get("ref_document_id") else None
     if not doc.get("customer_id"):
         problems.append("Kein Kunde gewählt.")
+    elif doc["doc_type"] == "storno" and ref and ref.get("recipient_json"):
+        pass  # Storno geht an den Empfänger der Ursprungsrechnung (Schnappschuss), nicht an den heutigen Datensatz
     else:
         c = repo.get_customer(con, doc["customer_id"]) or {}
         if not (c.get("last_name") or c.get("company")):
@@ -290,9 +319,50 @@ def validate(con: sqlite3.Connection, doc: dict, lines: list[dict]) -> list[str]
             problems.append(f"Position {i}: Bezeichnung fehlt (Menge und Art der Leistung).")
     if doc.get("tax_mode") == "kleinunternehmer" and doc["doc_type"] != "angebot" and "19" not in (doc.get("notes_text") or ""):
         problems.append("Hinweis auf die Steuerbefreiung nach § 19 UStG fehlt im Hinweistext.")
+    if doc.get("tax_mode") == "regel" and doc["doc_type"] != "angebot" and "§ 19" in (doc.get("notes_text") or ""):
+        problems.append("Der Hinweistext enthält den Kleinunternehmer-Hinweis (§ 19 UStG), der Beleg weist aber "
+                        "Umsatzsteuer aus. Bitte Hinweis entfernen oder Besteuerung prüfen.")
+    if doc.get("zugferd") and doc["doc_type"] in ("rechnung", "storno"):
+        cust = repo.get_customer(con, doc["customer_id"]) if doc.get("customer_id") else {}
+        for who, country in [("Kunde", (cust or {}).get("country")), ("Firma", comp.get("country"))]:
+            if repo.country_code(country) is None:
+                problems.append(f"E-Rechnung: Land „{country}“ ({who}) ist kein Ländercode – bitte z.B. DE, AT oder "
+                                "CH eintragen.")
     if doc.get("service_date_to") and doc.get("service_date") and doc["service_date_to"] < doc["service_date"]:
         problems.append("Leistungszeitraum: Ende liegt vor Beginn.")
     return problems
+
+
+def plausibility_warnings(doc: dict, lines: list[dict], today: date | None = None,
+                          default_tax_mode: str | None = None) -> list[str]:
+    """Hinweise auf wahrscheinliche Fehleingaben vor dem (unumkehrbaren) Festschreiben – keine Pflichtfehler."""
+    today = today or date.today()
+    warnings = []
+    if default_tax_mode and doc.get("tax_mode") != default_tax_mode and doc["doc_type"] != "storno":
+        names = {"kleinunternehmer": "Kleinunternehmer (ohne USt)", "regel": "Regelbesteuerung (mit USt)"}
+        warnings.append(f"Der Beleg ist auf {names.get(doc.get('tax_mode'), doc.get('tax_mode'))} gestellt, "
+                        f"eingestellt ist {names.get(default_tax_mode, default_tax_mode)}.")
+    if doc["doc_type"] != "storno":
+        total = compute_totals([dict(l) for l in lines], doc.get("tax_mode", "kleinunternehmer"))["gross"]
+        if total <= 0:
+            warnings.append(f"Der Gesamtbetrag ist {fmt_eur(total)}.")
+        for i, ln in enumerate(lines, 1):
+            if not int(ln.get("unit_price_cents") or 0) or not to_decimal(ln.get("quantity") or 0):
+                warnings.append(f"Position {i} („{ln.get('title') or ln.get('description') or ''}“) ergibt 0,00 €.")
+    if doc.get("doc_date"):
+        d = date.fromisoformat(doc["doc_date"])
+        if d > today + timedelta(days=7):
+            warnings.append(f"Das Belegdatum {fmt_date(d)} liegt in der Zukunft – die Nummer wird für "
+                            f"{d.month:02d}/{d.year} vergeben.")
+        elif d < today - timedelta(days=90):
+            warnings.append(f"Das Belegdatum {fmt_date(d)} liegt mehr als drei Monate zurück.")
+    return warnings
+
+
+def invoices_for_offer(con: sqlite3.Connection, offer_id: int) -> list[dict]:
+    """Rechnungen (auch Entwürfe), die aus einem Angebot erstellt wurden."""
+    return [dict(r) for r in con.execute(
+        "SELECT id, number, status FROM document WHERE ref_document_id=? AND doc_type='rechnung' ORDER BY id", (offer_id,))]
 
 
 # ---------------------------------------------------------------- Festschreiben
@@ -355,6 +425,20 @@ def build_render_data(con: sqlite3.Connection, doc: dict, lines: list[dict], num
     }
 
 
+def _set_aside_orphan(con: sqlite3.Connection, path: Path) -> None:
+    """Archivdatei mit der gerade vergebenen Nummer liegt schon da. Gehört sie zu keinem Beleg (z.B. Absturz zwischen
+    PDF-Erzeugung und Speichern), wird sie umbenannt und protokolliert, statt alle weiteren Belege zu blockieren."""
+    used = con.execute("SELECT 1 FROM document WHERE pdf_path=? OR import_file_path=? "
+                       "UNION SELECT 1 FROM dunning WHERE pdf_path=?", (str(path), str(path), str(path))).fetchone()
+    if used:
+        raise FileExistsError(f"Archivdatei existiert bereits und gehört zu einem Beleg: {path}")
+    for p in (path, path.with_suffix(".xml")):
+        if p.exists():
+            aside = p.with_name(f"{p.stem}-verwaist-{datetime.now():%Y%m%d-%H%M%S}{p.suffix}")
+            p.rename(aside)
+            audit.log(con, "orphan_archive_file", "document", None, {"file": p.name, "moved_to": aside.name})
+
+
 def finalize(con: sqlite3.Connection, doc_id: int, *, pdf_writer=None, zugferd_writer=None) -> dict:
     """Vergibt die Nummer, erzeugt das Archiv-PDF, speichert Hashes und schreibt fest – alles atomar.
 
@@ -378,16 +462,20 @@ def finalize(con: sqlite3.Connection, doc_id: int, *, pdf_writer=None, zugferd_w
             on = datetime.strptime(doc["doc_date"], "%Y-%m-%d").date()
             number = numbering.allocate(con, doc["doc_type"], on)
 
-            cust = repo.get_customer(con, doc["customer_id"])
-            recipient = dict(cust)
-            recipient["lines"] = repo.recipient_lines(cust)
-            doc["recipient_json"] = dumps(recipient)
+            ref = get_document(con, doc["ref_document_id"]) if doc.get("ref_document_id") else None
+            if doc["doc_type"] == "storno" and ref and ref.get("recipient_json"):
+                doc["recipient_json"] = ref["recipient_json"]
+            else:
+                cust = repo.get_customer(con, doc["customer_id"])
+                recipient = dict(cust)
+                recipient["lines"] = repo.recipient_lines(cust)
+                doc["recipient_json"] = dumps(recipient)
             doc["company_json"] = dumps(company(con))
             data = build_render_data(con, doc, lines, number, final=True)
 
             pdf_path = archive_path_for(number, doc["doc_date"], doc["doc_type"])
             if pdf_path.exists():
-                raise FileExistsError(f"Archivdatei existiert bereits: {pdf_path}")
+                _set_aside_orphan(con, pdf_path)
             written.append(pdf_path)
             pdf_writer(data, pdf_path)
             xml_hash = None
@@ -455,9 +543,11 @@ def create_storno(con: sqlite3.Connection, invoice_id: int, *, finalize_now: boo
         l2 = {k: ln[k] for k in LINE_FIELDS}
         l2["quantity"] = str(-to_decimal(ln["quantity"]))
         lines.append(l2)
-    draft_id = save_draft(con, doc, lines)
-    if finalize_now:
-        return finalize(con, draft_id, **writers)
+    # Entwurf und Festschreiben gemeinsam: scheitert das Festschreiben, bleibt kein unsichtbarer Storno-Entwurf zurück
+    with transaction(con):
+        draft_id = save_draft(con, doc, lines)
+        if finalize_now:
+            finalize(con, draft_id, **writers)
     return get_document(con, draft_id)
 
 
@@ -468,15 +558,23 @@ def is_cancelled(con: sqlite3.Connection, invoice_id: int) -> bool:
 
 
 def verify_archive(con: sqlite3.Connection) -> list[str]:
-    """Prüft, ob alle Archiv-PDFs vorhanden und unverändert sind."""
+    """Prüft, ob alle Archivdateien (Belege, Mahnungen, Ausgabenbelege) vorhanden und unverändert sind."""
+    files = []
+    for d in con.execute("SELECT number, pdf_path, pdf_sha256, import_file_path, import_sha256 FROM document WHERE status='festgeschrieben'"):
+        files += [(d["number"], d["pdf_path"], d["pdf_sha256"]), (d["number"], d["import_file_path"], d["import_sha256"])]
+    for m in con.execute("SELECT d.number, m.level, m.pdf_path, m.pdf_sha256 FROM dunning m JOIN document d ON d.id=m.document_id"):
+        files.append((f"{m['number']} Mahnstufe {m['level']}", m["pdf_path"], m["pdf_sha256"]))
+    for e in con.execute("SELECT exp_date, supplier, receipt_path, receipt_sha256 FROM expense WHERE receipt_path<>''"):
+        files.append((f"Ausgabe {e['exp_date']} {e['supplier'] or ''}".strip(), e["receipt_path"], e["receipt_sha256"]))
     problems = []
-    for d in con.execute("SELECT id, number, pdf_path, pdf_sha256, import_file_path, import_sha256 FROM document WHERE status='festgeschrieben'"):
-        for path, h in [(d["pdf_path"], d["pdf_sha256"]), (d["import_file_path"], d["import_sha256"])]:
-            if not path:
-                continue
-            p = Path(path)
-            if not p.exists():
-                problems.append(f"{d['number']}: Archivdatei fehlt ({p.name})")
-            elif h and _sha256(p) != h:
-                problems.append(f"{d['number']}: Archivdatei wurde verändert ({p.name})")
+    seen = set()
+    for label, stored, h in files:
+        if not stored or (stored, h) in seen:
+            continue
+        seen.add((stored, h))
+        p = config.resolve_stored_path(stored)
+        if not p.exists():
+            problems.append(f"{label}: Archivdatei fehlt ({p.name})")
+        elif h and _sha256(p) != h:
+            problems.append(f"{label}: Archivdatei wurde verändert ({p.name})")
     return problems

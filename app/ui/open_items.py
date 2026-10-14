@@ -49,7 +49,7 @@ class OpenItemsPage(QWidget):
         elif mode == "due":
             items = [d for d in items if d["days_overdue"] <= 0]
         self.table.setRowCount(0)
-        total = overdue = 0
+        total = overdue = credit = 0
         for d in items:
             r = self.table.rowCount()
             self.table.insertRow(r)
@@ -63,10 +63,14 @@ class OpenItemsPage(QWidget):
             for i, v in enumerate(vals):
                 self.table.setItem(r, i, item(v, d["id"] if i == 0 else None, align_right=i in (4, 5, 6, 7),
                                               color=color if i in (3, 4) else None))
-            total += d["open_cents"]
+            if d["open_cents"] > 0:
+                total += d["open_cents"]
+            else:
+                credit -= d["open_cents"]
             if od > 0:
                 overdue += d["open_cents"]
-        self.summary.setText(f"{len(items)} offene Rechnungen · offen gesamt {fmt_eur(total)} · davon überfällig {fmt_eur(overdue)}")
+        self.summary.setText(f"{len(items)} offene Posten · offen gesamt {fmt_eur(total)} · davon überfällig "
+                             f"{fmt_eur(overdue)}" + (f" · zu erstatten/Guthaben {fmt_eur(credit)}" if credit else ""))
 
     def _sel(self):
         did = selected_data(self.table)

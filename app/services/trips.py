@@ -11,7 +11,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from urllib.parse import quote_plus
 
 from app.db import repo
-from app.db.database import get_setting, row_to_dict, transaction
+from app.db.database import get_decimal_setting, get_setting, row_to_dict, transaction
 from app.money import fmt_date, to_decimal
 from app.services import audit
 
@@ -45,7 +45,7 @@ def amount_cents(km, rate) -> int:
 
 
 def current_rate(con: sqlite3.Connection) -> str:
-    return _num(get_setting(con, "expense.km_rate", "0,30"))
+    return _num(get_decimal_setting(con, "expense.km_rate", "0,30"))
 
 
 # ---------------------------------------------------------------- Lesen

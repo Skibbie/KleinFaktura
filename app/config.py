@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 APP_NAME = "KleinFaktura"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 # Frühere Programmnamen: deren Datenverzeichnis wird weiterverwendet, solange es noch kein eigenes gibt
 LEGACY_NAMES = ["EEE-Faktura"]
 DB_FILE = "faktura.sqlite3"
@@ -62,6 +62,77 @@ def archive_dir() -> Path:
     p = data_dir() / "archiv"
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def resolve_stored_path(stored) -> Path | None:
+    """Gespeicherter (absoluter) Pfad einer Archivdatei oder des Logos. Liegt die Datei dort nicht mehr – etwa nach
+    einer Rücksicherung auf einem anderen PC oder unter einem anderen Benutzer –, wird sie im aktuellen
+    Datenverzeichnis gesucht: Archivdateien ab dem letzten Ordner „archiv“, sonst (Logo) unter ihrem Namen."""
+    if not stored:
+        return None
+    path = Path(stored)
+    if is_unc(stored):
+        # Netzwerkpfade nie anfassen (z.B. aus einer präparierten Sicherung): nur lokal unter dem Namen suchen
+        return data_dir() / path.name
+    if path.exists():
+        return path
+    lowered = [part.lower() for part in path.parts]
+    if "archiv" in lowered:
+        i = len(lowered) - 1 - lowered[::-1].index("archiv")
+        candidate = archive_dir().joinpath(*path.parts[i + 1:])
+        if candidate.exists():
+            return candidate
+    if path.name and (data_dir() / path.name).exists():
+        return data_dir() / path.name
+    return path
+
+
+# Dateitypen, die Windows beim Öffnen ausführt statt anzuzeigen. Solche Dateien gehören nie ins Beleg-Archiv;
+# das Programm öffnet, archiviert und stellt sie nicht wieder her (Schutz vor präparierten Sicherungen).
+RISKY_SUFFIXES = {
+    ".exe", ".com", ".bat", ".cmd", ".ps1", ".psm1", ".psd1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".msi",
+    ".msp", ".mst", ".scr", ".pif", ".lnk", ".url", ".hta", ".cpl", ".jar", ".reg", ".dll", ".sys", ".ocx",
+    ".application", ".appref-ms", ".gadget", ".msc", ".scf", ".inf", ".chm", ".py", ".pyw", ".pyc", ".pyz",
+    ".settingcontent-ms", ".library-ms", ".search-ms", ".iso", ".img", ".vhd", ".vhdx", ".appx", ".msix",
+    ".appinstaller", ".diagcab", ".xll", ".xlam", ".ppam", ".website",
+}
+
+
+def is_risky_file(path) -> bool:
+    """Ausführbare bzw. beim Öffnen ausgeführte Datei (auch mit Doppelendung wie „rechnung.pdf.cmd“)."""
+    return Path(str(path).strip().rstrip(". ")).suffix.lower() in RISKY_SUFFIXES
+
+
+def is_unc(path) -> bool:
+    """Netzwerkpfad (\\\\server\\freigabe) – der bloße Zugriff kann die Windows-Anmeldung an den Server senden."""
+    s = str(path or "")
+    return s.startswith("\\\\") or s.startswith("//")
+
+
+def inside_archive(path) -> bool:
+    """Liegt der Ordner im Beleg-Archiv? Dort darf das Programm nichts ablegen (Kopien, Sicherungen)."""
+    try:
+        Path(path).resolve().relative_to(archive_dir().resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def preview_dir(cleanup_hours: float = 12) -> Path:
+    """Eigener Temp-Ordner für Vorschau-PDFs (enthalten Kundendaten). Ältere Vorschauen werden dabei gelöscht;
+    noch geöffnete (gesperrte) Dateien bleiben bis zum nächsten Mal liegen."""
+    import tempfile
+    import time
+    d = Path(tempfile.gettempdir()) / f"{APP_NAME}-Vorschau"
+    d.mkdir(exist_ok=True)
+    limit = time.time() - cleanup_hours * 3600
+    for f in d.glob("*.pdf"):
+        try:
+            if f.stat().st_mtime < limit:
+                f.unlink()
+        except OSError:
+            pass
+    return d
 
 
 def default_backup_dir() -> Path:

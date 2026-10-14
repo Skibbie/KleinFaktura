@@ -41,6 +41,22 @@ def to_cents(value) -> int:
     return int((to_decimal(value) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
+_THOUSANDS_ONLY = re.compile(r"^-?[1-9]\d{0,2}(\.\d{3})+$")
+
+
+def input_decimal(value) -> Decimal:
+    """Wie to_decimal, aber für Eingaben im Programm (deutsche Schreibweise): '1.500' ist 1500, nicht 1,5.
+    Nicht für gespeicherte Werte verwenden – die liegen mit Dezimalpunkt vor (z.B. Menge '2.250' = 2,25)."""
+    s = str(value or "").strip().replace("€", "").replace("EUR", "").replace("%", "").replace(" ", "").replace(" ", "")
+    if "," not in s and _THOUSANDS_ONLY.match(s):
+        s = s.replace(".", "")
+    return to_decimal(s)
+
+
+def input_cents(value) -> int:
+    return int((input_decimal(value) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
 def cents_to_decimal(cents: int) -> Decimal:
     return (Decimal(int(cents or 0)) / 100).quantize(CENT)
 

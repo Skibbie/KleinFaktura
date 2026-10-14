@@ -12,8 +12,18 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import date
 
-from app.db.database import get_setting
-from app.money import fmt_eur, to_cents
+from app.db.database import get_cents_setting, get_int_setting, get_setting
+from app.money import fmt_eur
+
+
+# Regelbesteuerung wird nur eingeschränkt unterstützt – überall dort anzeigen, wo sie gewählt werden kann
+REGEL_LABEL = "Regelbesteuerung – Umsatzsteuer ausweisen (eingeschränkt)"
+REGEL_HINWEIS = (
+    "Regelbesteuerung wird nur eingeschränkt unterstützt: Rechnungen mit Umsatzsteuer (auch 7 %/19 % gemischt und "
+    "als E-Rechnung) werden korrekt erstellt. Nicht unterstützt sind die Umsatzsteuer-Voranmeldung, das Buchen der "
+    "Umsatzsteuer im DATEV-Export, Umsatz- und Vorsteuer in den EÜR-Werten (Abschreibungen und Bewirtung werden "
+    "brutto gerechnet), der Abzug von Abschlagsrechnungen in Schlussrechnungen sowie Reverse Charge und "
+    "innergemeinschaftliche Leistungen. Bitte Buchhaltung und Steuererklärung mit dem Steuerberater abstimmen.")
 
 
 @dataclass
@@ -53,7 +63,7 @@ class KUStatus:
         if self.curr_year_cents > self.limit_prev_cents:
             w.append(f"Umsatz {self.year} liegt über {self.limit_prev_cents // 100:,} € – "
                      f"ab {self.year + 1} ist die Kleinunternehmerregelung nicht mehr möglich.".replace(",", "."))
-        elif self.curr_year_cents * 100 >= self.limit_prev_cents * self.warn_percent:
+        elif self.limit_prev_cents and self.curr_year_cents * 100 >= self.limit_prev_cents * self.warn_percent:
             w.append(f"Umsatz {self.year} hat {self.curr_year_cents / self.limit_prev_cents:.0%} der "
                      f"25.000-€-Grenze erreicht (relevant für {self.year + 1}).")
         return w
@@ -67,11 +77,10 @@ def revenue_cents(con: sqlite3.Connection, year: int, basis: str) -> int:
             "SELECT COALESCE(SUM(total_net_cents),0) FROM document WHERE status='festgeschrieben' "
             "AND doc_type IN ('rechnung','storno') AND substr(doc_date,1,4)=?", (y,)).fetchone()
         return int(row[0])
-    # vereinnahmte Entgelte: Zahlungseingänge im Jahr (bei Kleinunternehmer brutto = netto)
-    row = con.execute(
-        "SELECT COALESCE(SUM(p.amount_cents),0) FROM payment p JOIN document d ON d.id=p.document_id "
-        "WHERE substr(p.pay_date,1,4)=?", (y,)).fetchone()
-    return int(row[0])
+    # vereinnahmte Entgelte: Zahlungseingänge im Jahr, bei Regel-Rechnungen ohne die enthaltene USt. Mahngebühren sind
+    # Schadensersatz, kein Entgelt, und zählen nicht zum Umsatz nach § 19 UStG.
+    from app.services.payments import payment_parts
+    return sum(p["revenue_net_cents"] for p in payment_parts(con, year))
 
 
 def status(con: sqlite3.Connection, year: int | None = None) -> KUStatus:
@@ -82,9 +91,9 @@ def status(con: sqlite3.Connection, year: int | None = None) -> KUStatus:
         basis=basis,
         prev_year_cents=revenue_cents(con, year - 1, basis),
         curr_year_cents=revenue_cents(con, year, basis),
-        limit_prev_cents=to_cents(get_setting(con, "ku.limit_prev", "25000")),
-        limit_curr_cents=to_cents(get_setting(con, "ku.limit_curr", "100000")),
-        warn_percent=int(get_setting(con, "ku.warn_percent", "80")),
+        limit_prev_cents=get_cents_setting(con, "ku.limit_prev", "25000"),
+        limit_curr_cents=get_cents_setting(con, "ku.limit_curr", "100000"),
+        warn_percent=get_int_setting(con, "ku.warn_percent", "80"),
     )
 
 

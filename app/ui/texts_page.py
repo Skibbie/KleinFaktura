@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QLabel, QLineE
 
 from app.db import repo
 from app.db.database import get_setting, set_setting
-from app.money import fmt_eur, to_cents
+from app.money import fmt_eur, input_cents
 from app.ui.common import (CANCEL, SAVE, Ctx, ask_save, button, confirm, hbox, item, make_table, page_title,
                            selected_data)
 
@@ -272,7 +272,7 @@ class ArticleTab(_FormGuard, QWidget):
             QMessageBox.warning(self, "Artikel", "Bitte eine Bezeichnung angeben.")
             return False
         try:
-            price = to_cents(self.price.text() or "0")
+            price = input_cents(self.price.text() or "0")
         except ValueError as e:
             QMessageBox.warning(self, "Artikel", str(e))
             return False

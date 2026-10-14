@@ -31,6 +31,13 @@ EXE_NAME = f"{config.APP_NAME}.exe"
 ZIP_PREFIX = f"{config.APP_NAME}/"  # Ordner im Release-ZIP
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+# Öffentlicher Ed25519-Schlüssel (Base64) zur Prüfung der Release-Signatur. Gegenstück ist das GitHub-Secret
+# UPDATE_SIGNING_KEY (tools/make_update_key.py, tools/sign_release.py). Updates ohne gültige Signatur werden
+# abgelehnt – auch wenn jemand Zugriff auf das GitHub-Konto oder die Release-Dateien hätte.
+UPDATE_PUBLIC_KEY = "6LmnqnP3YCjKeEc3zTdBogAvCd66MCe1E8n/mNPh6GA="
+SUMS_NAME = "SHA256SUMS.txt"
+SIG_NAME = "SHA256SUMS.txt.sig"
+
 
 class UpdateError(Exception):
     pass
@@ -108,8 +115,49 @@ def installed_by_setup(target: Path) -> bool:
     return any(target.glob("unins*.exe"))
 
 
-def _fetch(asset: dict, dest: Path) -> Path:
-    """Lädt ein Release-Asset und prüft die SHA-256-Prüfsumme (sofern GitHub sie liefert)."""
+def _read_small(asset: dict, limit: int = 64 * 1024) -> bytes:
+    with _open(asset["browser_download_url"], timeout=60, accept="application/octet-stream") as r:
+        data = r.read(limit + 1)
+    if len(data) > limit:
+        raise UpdateError(f"{asset.get('name')} ist unerwartet groß.")
+    return data
+
+
+def verify_signature(sums: bytes, signature_b64: bytes, public_key_b64: str | None = None) -> dict[str, str]:
+    """Prüft die Ed25519-Signatur der Prüfsummendatei und gibt {Dateiname: sha256} zurück."""
+    import base64
+    import binascii
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    key_b64 = UPDATE_PUBLIC_KEY if public_key_b64 is None else public_key_b64
+    if not key_b64:
+        raise UpdateError("In dieser Programmversion ist kein Schlüssel zur Update-Prüfung hinterlegt.")
+    try:
+        Ed25519PublicKey.from_public_bytes(base64.b64decode(key_b64)).verify(base64.b64decode(signature_b64.strip()), sums)
+    except (InvalidSignature, binascii.Error, ValueError) as e:
+        raise UpdateError("Die Signatur des Updates ist ungültig. Aus Sicherheitsgründen wird es nicht installiert – "
+                          "bitte später erneut versuchen oder den Hersteller informieren.") from e
+    out = {}
+    for line in sums.decode("utf-8").splitlines():
+        digest, _, name = line.strip().partition("  ")
+        if name:
+            out[name] = digest.lower()
+    return out
+
+
+def signed_sums(release: Release) -> dict[str, str]:
+    """Signierte Prüfsummen des Releases; fehlt die Signatur, wird das Update abgelehnt."""
+    try:
+        sums, sig = _asset(release, SUMS_NAME), _asset(release, SIG_NAME)
+    except UpdateError as e:
+        raise UpdateError(f"Das Release {release.version} ist nicht signiert und wird aus Sicherheitsgründen nicht "
+                          "automatisch installiert. Bitte das Setup bei Bedarf selbst von GitHub laden.") from e
+    return verify_signature(_read_small(sums), _read_small(sig))
+
+
+def _fetch(asset: dict, dest: Path, expected_sha256: str | None = None) -> Path:
+    """Lädt ein Release-Asset und prüft die Prüfsumme: gegen die signierte Liste und, falls vorhanden, gegen die
+    von GitHub gemeldete."""
     sha = hashlib.sha256()
     with _open(asset["browser_download_url"], timeout=900, accept="application/octet-stream") as r, \
             open(dest, "wb") as out:
@@ -118,28 +166,38 @@ def _fetch(asset: dict, dest: Path) -> Path:
             out.write(chunk)
     try:
         check_digest(asset, sha.hexdigest())
+        if expected_sha256 is not None and sha.hexdigest().lower() != expected_sha256.lower():
+            raise UpdateError("Die heruntergeladene Datei passt nicht zur signierten Prüfsumme – Update abgebrochen.")
     except UpdateError:
         dest.unlink(missing_ok=True)
         raise
     return dest
 
 
+def _expected(sums: dict[str, str], asset: dict) -> str:
+    if asset["name"] not in sums:
+        raise UpdateError(f"{asset['name']} fehlt in der signierten Prüfsummenliste – Update abgebrochen.")
+    return sums[asset["name"]]
+
+
 def download(release: Release, target: Path) -> Path:
     """Lädt das Release-ZIP und entpackt es nach <target>.neu. Gibt den neuen Programmordner zurück."""
     asset = zip_asset(release)
+    expected = _expected(signed_sums(release), asset)
     new_dir = target.with_name(target.name + ".neu")
     shutil.rmtree(new_dir, ignore_errors=True)
     with tempfile.TemporaryDirectory(prefix="kleinfaktura-update-") as tmp:
-        extract(_fetch(asset, Path(tmp) / asset["name"]), new_dir)
+        extract(_fetch(asset, Path(tmp) / asset["name"], expected), new_dir)
     return new_dir
 
 
 def download_setup(release: Release) -> Path:
     """Lädt das Setup des Releases in einen Temp-Ordner (bleibt bis zur Installation liegen)."""
     asset = setup_asset(release)
-    folder = Path(tempfile.gettempdir()) / "kleinfaktura-update"
-    folder.mkdir(exist_ok=True)
-    return _fetch(asset, folder / asset["name"])
+    expected = _expected(signed_sums(release), asset)
+    # eigener Ordner mit Zufallsnamen: nicht vorhersehbar, nicht von anderen Prozessen vorbelegt
+    folder = Path(tempfile.mkdtemp(prefix="kleinfaktura-update-"))
+    return _fetch(asset, folder / asset["name"], expected)
 
 
 def check_digest(asset: dict, sha256_hex: str) -> None:
@@ -229,7 +287,7 @@ def helper_command(script: Path, pid: int, source: Path, target: Path, log: Path
 def launch_helper(source: Path, target: Path, setup: bool = False) -> None:
     """Startet das Update-Skript losgelöst; es wartet, bis dieser Prozess beendet ist.
     source: neuer Programmordner (Ordnertausch) bzw. Setup-Datei (setup=True)."""
-    tmp = Path(tempfile.gettempdir())
+    tmp = Path(tempfile.mkdtemp(prefix="kleinfaktura-update-"))   # Zufallsname statt fester Skriptdatei
     script = write_helper(tmp)
     cmd = helper_command(script, os.getpid(), source, target, config.data_dir() / "update.log", setup=setup)
     # cwd ausdrücklich außerhalb des Programmordners, sonst hält das Skript ihn selbst fest

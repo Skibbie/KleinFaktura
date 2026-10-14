@@ -5,12 +5,12 @@ from datetime import date, datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QGroupBox, QLabel, QListWidget, QMessageBox,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QGroupBox, QInputDialog, QLabel, QLineEdit,
+                               QListWidget, QMessageBox, QVBoxLayout, QWidget)
 
 from app import config
 from app.db.database import get_setting
-from app.services import audit, backup, documents, export
+from app.services import audit, backup, backup_crypto, documents, export
 from app.ui.common import Ctx, button, confirm, error, hbox, open_file, page_title
 
 
@@ -73,6 +73,10 @@ class ExportPage(QWidget):
                 self.backups.addItem(p.name)
         except OSError:
             pass
+        if not self.backups.count():
+            self.backups.addItem("Noch keine Sicherung in diesem Ordner. Sie entsteht automatisch beim Beenden des "
+                                 "Programms (einmal täglich) oder mit „Jetzt sichern“.")
+            self.backups.item(0).setFlags(Qt.NoItemFlags)
 
     def _ask_path(self, title, default, filt):
         path, _ = QFileDialog.getSaveFileName(self, title, str(Path.home() / "Documents" / default), filt)
@@ -130,17 +134,48 @@ class ExportPage(QWidget):
             return
         QApplication.restoreOverrideCursor()
         self.reload()
-        QMessageBox.information(self, "Sicherung", f"Sicherung erstellt:\n{p}")
+        QMessageBox.information(self, "Sicherung", backup.fallback_notice(self.ctx.con, p) or f"Sicherung erstellt:\n{p}")
 
     def open_dir(self):
         open_file(backup.backup_dir(self.ctx.con))
 
     def restore(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Sicherung wählen", str(backup.backup_dir(self.ctx.con)), "Sicherung (*.zip)")
+        path, _ = QFileDialog.getOpenFileName(self, "Sicherung wählen", str(backup.backup_dir(self.ctx.con)),
+                                              "Sicherung (*.zip *.enc)")
         if not path:
+            return
+        plain, temporary = Path(path), False
+        try:
+            if backup_crypto.is_encrypted(path):
+                plain, temporary = self._decrypt(Path(path)), True
+                if plain is None:
+                    return
+            backup.check_backup(plain)
+        except ValueError as e:
+            if temporary:
+                plain.unlink(missing_ok=True)
+            QMessageBox.warning(self, "Wiederherstellen", str(e))
             return
         if not confirm(self, "Wiederherstellen",
                        "Der aktuelle Datenstand wird durch die Sicherung ersetzt (eine Kopie des aktuellen Stands "
                        "wird im Datenverzeichnis aufbewahrt).\n\nFortfahren?"):
+            if temporary:
+                plain.unlink(missing_ok=True)
             return
-        self.restart_cb(lambda: backup.restore_backup(Path(path)))
+        self.restart_cb(lambda: backup.restore_backup(plain, delete_after=temporary))
+
+    def _decrypt(self, path: Path) -> Path | None:
+        """Verschlüsselte Sicherung: erst das eingestellte Passwort versuchen, sonst danach fragen."""
+        password = get_setting(self.ctx.con, "backup.password")
+        while True:
+            try:
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                try:
+                    return backup.decrypt_for_restore(path, password)
+                finally:
+                    QApplication.restoreOverrideCursor()
+            except backup_crypto.WrongPassword:
+                password, ok = QInputDialog.getText(self, "Verschlüsselte Sicherung",
+                                                    "Passwort dieser Sicherung:", QLineEdit.Password)
+                if not ok:
+                    return None

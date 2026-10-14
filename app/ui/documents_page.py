@@ -7,9 +7,9 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFormLayout
                                QMessageBox, QVBoxLayout, QWidget)
 
 from app.db import repo
-from app.money import fmt_date, fmt_eur
+from app.money import fmt_date, fmt_eur, input_cents
 from app.services import documents, payments
-from app.ui.common import (STATUS_COLORS, Ctx, button, confirm, date_edit, date_value, error, hbox, item, make_table,
+from app.ui.common import (STATUS_COLORS, Ctx, button, confirm, count, date_edit, date_value, error, hbox, item, make_table,
                            open_file, page_title, selected_data)
 from app.ui.mail_ui import export_after_finalize, send_mail
 
@@ -47,9 +47,29 @@ class PaymentDialog(QDialog):
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
 
+    def _confirm_amount(self, cents: int) -> bool:
+        """Rückfrage bei auffälligen Beträgen – Zahlungen sind unveränderbar."""
+        con, did = self.ctx.con, self.doc["id"]
+        if documents.is_cancelled(con, did):
+            if cents < 0:
+                return True          # Erstattung nach Storno: der vorgeschlagene Betrag ist bereits negativ
+            return confirm(self, "Zahlung", f"Rechnung {self.doc['number']} ist storniert. Trotzdem eine Zahlung buchen?")
+        # Höchstens erwartet: Rechnungsbetrag + alle Mahngebühren − bisher gezahlt
+        expected = int(self.doc["total_gross_cents"]) + payments.fees_cents(con, did) - payments.paid_cents(con, did)
+        if cents > expected:
+            return confirm(self, "Zahlung", f"Der Betrag {fmt_eur(cents)} ist höher als der offene Betrag "
+                                            f"{fmt_eur(max(expected, 0))} (inkl. Mahngebühren).\n\n"
+                                            "Zahlungen lassen sich nicht ändern. Trotzdem buchen?")
+        if cents < 0:
+            return confirm(self, "Zahlung", f"Negativer Betrag {fmt_eur(cents)} (Rückzahlung/Korrektur) buchen?")
+        return True
+
     def save(self):
         try:
-            payments.add_payment(self.ctx.con, self.doc["id"], date_value(self.date), self.amount.text(),
+            cents = input_cents(self.amount.text())
+            if not self._confirm_amount(cents):
+                return
+            payments.add_payment(self.ctx.con, self.doc["id"], date_value(self.date), cents,
                                  self.method.currentText(), self.note.text())
         except Exception as e:  # noqa: BLE001
             error(self, "Zahlung", e)
@@ -72,6 +92,11 @@ def make_dunning(parent, ctx: Ctx, doc_id: int) -> None:
     d = documents.get_document(ctx.con, doc_id)
     if payments.open_amount(ctx.con, doc_id) <= 0:
         QMessageBox.information(parent, "Mahnung", "Diese Rechnung ist nicht offen.")
+        return
+    due = d.get("due_date")
+    if due and due >= date.today().isoformat() and not confirm(
+            parent, "Mahnung", f"Die Rechnung {d['number']} ist erst am {fmt_date(due)} fällig.\n\n"
+                               "Mahnungen lassen sich nicht löschen. Trotzdem jetzt mahnen?"):
         return
     lvl = payments.next_dunning_level(ctx.con, doc_id)
     hist = payments.dunning_history(ctx.con, doc_id)
@@ -111,16 +136,17 @@ class DocumentsPage(QWidget):
         lay.addLayout(hbox(self.search, self.year))
 
         new_label = "Neues Angebot" if kind == "angebot" else "Neue Rechnung"
-        btns = [button(new_label, self.new, primary=True), button("Öffnen", self.open), button("PDF", self.pdf),
-                button("Per E-Mail", self.mail, tooltip="Thunderbird mit vorbereiteter Mail und PDF-Anhang öffnen"),
-                button("Kopieren", self.copy)]
+        # Knöpfe, die vom markierten Beleg abhängen: Schlüssel -> Knopf (Freigabe in _update_buttons)
+        self.sel_buttons = {"open": button("Öffnen", self.open), "pdf": button("PDF", self.pdf),
+                            "mail": button("Per E-Mail", self.mail),
+                            "copy": button("Kopieren", self.copy)}
         if kind == "angebot":
-            btns.append(button("In Rechnung umwandeln", self.convert))
+            self.sel_buttons["convert"] = button("In Rechnung umwandeln", self.convert)
         else:
-            btns += [button("Zahlung erfassen", self.payment), button("Mahnen", self.dunning),
-                     button("Stornieren", self.cancel, danger=True)]
-        btns.append(button("Entwurf löschen", self.delete, danger=True))
-        btns.append(None)
+            self.sel_buttons.update(payment=button("Zahlung erfassen", self.payment), dunning=button("Mahnen", self.dunning),
+                                    cancel=button("Stornieren", self.cancel, danger=True))
+        self.sel_buttons["delete"] = button("Entwurf löschen", self.delete, danger=True)
+        btns = [button(new_label, self.new, primary=True), *self.sel_buttons.values(), None]
         imp = button("Bestehende importieren ▾", self.import_menu)
         btns.append(imp)
         self.import_btn = imp
@@ -129,7 +155,9 @@ class DocumentsPage(QWidget):
         cols = ["Nummer", "Datum", "Kunde", "Betreff", "Betrag", "Offen" if kind != "angebot" else "Gültig bis", "Status", "Quelle"]
         self.table = make_table(cols, stretch_col=2)
         self.table.doubleClicked.connect(self.open)
+        self.table.itemSelectionChanged.connect(self._update_buttons)
         lay.addWidget(self.table)
+        self._rows: dict[int, dict] = {}
         self.sum_label = QLabel()
         lay.addWidget(self.sum_label)
         ctx.listeners.append(self.reload)
@@ -137,8 +165,9 @@ class DocumentsPage(QWidget):
 
     def reload(self, *_):
         rows = documents.list_documents(self.ctx.con, self.types, self.search.text().strip(), self.year.currentData())
+        self._rows = {d["id"]: d for d in rows}
         self.table.setRowCount(0)
-        total = paid_total = open_total = 0
+        total = paid_total = open_total = credit_total = 0
         for d in rows:
             r = self.table.rowCount()
             self.table.insertRow(r)
@@ -148,7 +177,8 @@ class DocumentsPage(QWidget):
             color = STATUS_COLORS.get(label.split(" ")[0])
             vals = [d["number"] or "(Entwurf)", fmt_date(d["doc_date"]), cust, d["subject"] or "",
                     fmt_eur(d["total_gross_cents"]),
-                    fmt_eur(d["open_cents"]) if self.kind != "angebot" else fmt_date(d["valid_until"]),
+                    ("" if d["status"] == "entwurf" else fmt_eur(d["open_cents"])) if self.kind != "angebot"
+                    else fmt_date(d["valid_until"]),
                     label, "Import" if d["source"] == "import" else ""]
             for i, v in enumerate(vals):
                 self.table.setItem(r, i, item(v, d["id"] if i == 0 else None, align_right=i in (4, 5) and self.kind != "angebot" or i == 4,
@@ -157,7 +187,11 @@ class DocumentsPage(QWidget):
                 # Stornos sind negativ und heben die stornierte Rechnung auf
                 total += d["total_gross_cents"]
                 paid_total += int(d.get("paid_cents") or 0)
-                open_total += d["open_cents"]
+                # Forderungen und Guthaben (Überzahlung, Erstattung nach Storno) getrennt, nicht verrechnet
+                if d["open_cents"] > 0:
+                    open_total += d["open_cents"]
+                else:
+                    credit_total -= d["open_cents"]
             elif d["status"] == "festgeschrieben" and d["doc_type"] == "angebot":
                 total += d["total_gross_cents"]
         period = self.year.currentText() if self.year.currentData() else "alle Jahre"
@@ -165,11 +199,36 @@ class DocumentsPage(QWidget):
         draft_txt = f", dazu {drafts} Entwurf" + ("e" if drafts != 1 else "") if drafts else ""
         if self.kind == "angebot":
             n = len(rows) - drafts
-            self.sum_label.setText(f"{n} Angebote {period}{draft_txt}: angeboten {fmt_eur(total)}")
+            self.sum_label.setText(f"{count(n, 'Angebot', 'Angebote')} {period}{draft_txt}: angeboten {fmt_eur(total)}")
         else:
             n = sum(1 for d in rows if d["status"] == "festgeschrieben" and d["doc_type"] == "rechnung")
-            self.sum_label.setText(f"{n} Rechnungen {period}{draft_txt}: berechnet {fmt_eur(total)}, "
-                                   f"bezahlt {fmt_eur(paid_total)}, offen {fmt_eur(open_total)}")
+            self.sum_label.setText(f"{count(n, 'Rechnung', 'Rechnungen')} {period}{draft_txt}: berechnet {fmt_eur(total)}, "
+                                   f"bezahlt {fmt_eur(paid_total)}, offen {fmt_eur(open_total)}"
+                                   + (f", zu erstatten/Guthaben {fmt_eur(credit_total)}" if credit_total else ""))
+        self._update_buttons()
+
+    def _update_buttons(self, *_):
+        """Nur passende Aktionen anbieten; der Tooltip sagt, warum ein Knopf gerade nicht geht."""
+        d = self._rows.get(selected_data(self.table)) if self.table.selectionModel() else None
+        final = bool(d) and d["status"] == "festgeschrieben"
+        invoice = final and d["doc_type"] == "rechnung"
+        cancelled = invoice and bool(d.get("storno_number"))
+        rules = {
+            "open": (bool(d), "Bitte einen Beleg markieren."),
+            "pdf": (final, "Entwürfe haben noch kein PDF – im Beleg „Vorschau“ nutzen."),
+            "mail": (final and bool(d.get("pdf_path")), "Erst nach dem Festschreiben (bei Importen nur mit PDF)."),
+            "copy": (bool(d), "Bitte einen Beleg markieren."),
+            "convert": (bool(d), "Bitte ein Angebot markieren."),
+            "payment": (invoice, "Zahlungen nur auf festgeschriebene Rechnungen."),
+            "dunning": (invoice and not cancelled and d["open_cents"] > 0, "Nur offene, festgeschriebene Rechnungen."),
+            "cancel": (invoice and not cancelled, "Nur festgeschriebene, noch nicht stornierte Rechnungen."),
+            "delete": (bool(d) and d["status"] == "entwurf", "Nur Entwürfe können gelöscht werden."),
+        }
+        tips = {"mail": "Thunderbird mit vorbereiteter Mail und PDF-Anhang öffnen"}
+        for key, btn in self.sel_buttons.items():
+            ok, why = rules[key]
+            btn.setEnabled(ok)
+            btn.setToolTip(tips.get(key, "") if ok else why)
 
     def _sel(self):
         did = selected_data(self.table)
@@ -219,6 +278,12 @@ class DocumentsPage(QWidget):
         src = documents.get_document(self.ctx.con, did)
         if src["status"] != "festgeschrieben" and not confirm(self, "Angebot", "Das Angebot ist noch ein Entwurf. Trotzdem umwandeln?"):
             return
+        existing = documents.invoices_for_offer(self.ctx.con, did)
+        if existing:
+            names = ", ".join(e["number"] or "Entwurf" for e in existing)
+            if not confirm(self, "Angebot", f"Aus diesem Angebot wurde bereits eine Rechnung erstellt ({names}).\n\n"
+                                            "Trotzdem eine weitere Rechnung anlegen (z.B. Teil- oder Schlussrechnung)?"):
+                return
         new_id = documents.copy_as_draft(self.ctx.con, did, "rechnung")
         self.ctx.changed()
         from app.ui.editor import open_editor

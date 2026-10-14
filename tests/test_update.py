@@ -115,3 +115,66 @@ def test_installed_by_setup(tmp_path):
     assert update.installed_by_setup(tmp_path)
     r = update.Release("2.1.0", "", [{"name": "KleinFaktura-Setup-2.1.0.exe"}])
     assert update.setup_asset(r)["name"] == "KleinFaktura-Setup-2.1.0.exe"
+
+
+# ------------------------------------------------------------------ Signatur der Releases
+def _keypair():
+    import base64
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    key = Ed25519PrivateKey.generate()
+    raw = key.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
+    pub = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    return base64.b64encode(raw).decode(), base64.b64encode(pub).decode()
+
+
+def _signed_release(tmp_path, monkeypatch, private_b64):
+    """Release mit Setup + Signatur wie aus dem Workflow; _open liefert die Dateien aus tmp_path."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import sign_release
+    setup = tmp_path / "KleinFaktura-Setup-9.9.9.exe"
+    setup.write_bytes(b"MZ echtes Setup")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("UPDATE_SIGNING_KEY", private_b64)
+    assert sign_release.main([str(setup)]) == 0
+    files = {p.name: p for p in tmp_path.iterdir() if p.is_file()}
+    monkeypatch.setattr(update, "_open", lambda url, timeout, accept="": open(files[url], "rb"))
+    assets = [{"name": n, "browser_download_url": n} for n in files]
+    return update.Release("9.9.9", "", assets), files
+
+
+def test_signed_update_is_accepted(tmp_path, monkeypatch):
+    private, public = _keypair()
+    release, _ = _signed_release(tmp_path, monkeypatch, private)
+    monkeypatch.setattr(update, "UPDATE_PUBLIC_KEY", public)
+    path = update.download_setup(release)
+    assert path.read_bytes() == b"MZ echtes Setup"
+
+
+def test_tampered_or_unsigned_update_is_rejected(tmp_path, monkeypatch):
+    private, public = _keypair()
+    _other_private, other_public = _keypair()
+    release, files = _signed_release(tmp_path, monkeypatch, private)
+    monkeypatch.setattr(update, "UPDATE_PUBLIC_KEY", other_public)          # fremder Schlüssel
+    with pytest.raises(update.UpdateError, match="Signatur"):
+        update.download_setup(release)
+    monkeypatch.setattr(update, "UPDATE_PUBLIC_KEY", public)
+    files["KleinFaktura-Setup-9.9.9.exe"].write_bytes(b"MZ ausgetauscht")   # Datei nach dem Signieren getauscht
+    with pytest.raises(update.UpdateError, match="signierten Prüfsumme"):
+        update.download_setup(release)
+    unsigned = update.Release("9.9.9", "", [a for a in release.assets if not a["name"].startswith("SHA256SUMS")])
+    with pytest.raises(update.UpdateError, match="nicht signiert"):
+        update.download_setup(unsigned)
+    monkeypatch.setattr(update, "UPDATE_PUBLIC_KEY", "")
+    with pytest.raises(update.UpdateError, match="kein Schlüssel"):
+        update.verify_signature(b"x", b"eA==")
+
+
+def test_sign_release_requires_key(tmp_path, monkeypatch):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import sign_release
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("UPDATE_SIGNING_KEY", raising=False)
+    (tmp_path / "a.exe").write_bytes(b"x")
+    assert sign_release.main([str(tmp_path / "a.exe")]) == 1
+    assert not (tmp_path / "SHA256SUMS.txt").exists()

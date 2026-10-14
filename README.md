@@ -44,8 +44,8 @@ Beim ersten Wählen eines Profils kommen dessen Startwerte dazu. Ein Wechsel lö
 | Storno | Stornorechnung mit eigener Nummer und Verweis; festgeschriebene Belege sind unveränderbar |
 | Offene Posten | Teilzahlungen, Überfälligkeit, Zahlungserinnerung / 1. / 2. Mahnung mit Gebühren und GiroCode |
 | Altbelege | Import bestehender Rechnungen aus .ods / .xlsx / .pdf, Prüfdialog, Nummernreservierung, Dubletten- und Kollisionsprüfung |
-| Kleinunternehmer | Wächter für 25.000 € (Vorjahr) / 100.000 € (lfd. Jahr), Prüfung vor jedem Festschreiben, Umschalten auf Regelbesteuerung |
-| GoBD | Trigger gegen Änderungen, Hash-Kette im Protokoll, Archiv mit SHA-256, Integritätsprüfung, Datenexport für Betriebsprüfung, Vorlage Verfahrensdokumentation (`docs/`) |
+| Kleinunternehmer | Wächter für 25.000 € (Vorjahr) / 100.000 € (lfd. Jahr), Prüfung vor jedem Festschreiben, Umschalten auf Regelbesteuerung (eingeschränkt, siehe Hinweise) |
+| GoBD | Trigger gegen Änderungen über das Programm (bei jedem Start erneuert), Hash-Kette im Protokoll, Archiv mit SHA-256, Integritätsprüfung, Datenexport für Betriebsprüfung, Vorlage Verfahrensdokumentation (`docs/`) |
 | Ausgaben | Ausgabenbuch mit Kategorien nach Anlage EÜR, Beleg-Archiv (PDF/Foto, schreibgeschützt mit Prüfsumme), Abschreibung über die Nutzungsdauer (monatsgenau), 70 % Bewirtung, Übernahme aus CSV-Kontoauszug, Jahresabschluss (danach unveränderbar) |
 | Fahrten | Fahrtennachweis für den Privat-Pkw (Datum, Kunde/Objekt, Ziel, Anlass, km, verknüpfte Rechnung), Kilometerpauschale je Fahrt gespeichert, km-Vorschlag aus der letzten Fahrt zum selben Ziel, Excel-Export; Summe fließt in die EÜR-Werte |
 | EÜR-Werte | Jahressummen je EÜR-Bereich zum Übertragen in die Steuersoftware, Abhakliste, Excel-Export |
@@ -63,6 +63,11 @@ Beim ersten Wählen eines Profils kommen dessen Startwerte dazu. Ein Wechsel lö
 in E-Mail-Vorlagen zusätzlich `{belegart} {betreff}`, in Mahnungen zusätzlich `{offen} {gebuehr} {gesamt} {neu_faellig} {rechnungsnr} {rechnungsdatum}`.
 
 ## Hinweise
+- **Regelbesteuerung ist eingeschränkt**: Rechnungen mit Umsatzsteuer (7 %/19 %, auch als E-Rechnung) werden
+  korrekt erstellt. Nicht unterstützt: Umsatzsteuer-Voranmeldung, USt-Buchung im DATEV-Export, Umsatz-/Vorsteuer
+  in den EÜR-Werten, Abzug von Abschlagsrechnungen, Reverse Charge.
+- Die Sperren gegen Änderungen wirken im Programm; wer direkten Zugriff auf Datenbank und Archivordner hat, kann
+  sie umgehen (nur teilweise erkennbar). Details in der Verfahrensdokumentation.
 - Die Software ist GoBD-*unterstützend*. Die Ordnungsmäßigkeit hängt vom gelebten Verfahren ab
   (Verfahrensdokumentation ausfüllen).
 - Kleinunternehmer müssen keine E-Rechnungen ausstellen (aber empfangen können). ZUGFeRD ist pro Rechnung zuschaltbar.

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QComboBox, QCompleter, QDialog, QDialogButtonBox,
 from app.db import repo
 from app.money import fmt_date
 from app.services import notes
-from app.ui.common import (Ctx, GuardedDialog, button, confirm, date_edit, date_value, error, hbox, item, make_table,
+from app.ui.common import (Ctx, GuardedDialog, button, confirm, count, date_edit, date_value, error, hbox, item, make_table,
                            page_title, searchable_combo, selected_data)
 
 
@@ -150,7 +150,7 @@ class NotesPage(QWidget):
                     first_line]
             for i, v in enumerate(vals):
                 self.table.setItem(r, i, item(v, n["id"] if i == 0 else None))
-        self.count_label.setText(f"{len(rows)} Notizen")
+        self.count_label.setText(count(len(rows), "Notiz", "Notizen"))
 
     def show_customer(self, customer_id: int | None):
         """Filtert die Liste auf einen Kunden (z.B. aus der Kundenansicht)."""

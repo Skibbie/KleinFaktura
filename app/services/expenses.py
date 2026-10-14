@@ -15,7 +15,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 from app import config
-from app.db.database import get_setting, row_to_dict, transaction
+from app.db.database import get_decimal_setting, row_to_dict, transaction
 from app.money import to_decimal
 from app.services import audit
 
@@ -64,7 +64,7 @@ GWG_LIMIT_NET_CENTS = 80000
 
 # ---------------------------------------------------------------- Berechnungen
 def km_amount_cents(con: sqlite3.Connection, km) -> int:
-    rate = to_decimal(get_setting(con, "expense.km_rate", "0,30"))
+    rate = get_decimal_setting(con, "expense.km_rate", "0,30")
     return int((to_decimal(km) * rate * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
@@ -134,7 +134,10 @@ def is_locked(con: sqlite3.Connection, year: int | str) -> bool:
     return bool(con.execute("SELECT 1 FROM expense_lock WHERE year=?", (str(year),)).fetchone())
 
 
-def lock_year(con: sqlite3.Connection, year: int) -> None:
+def lock_year(con: sqlite3.Connection, year: int, *, today: date | None = None) -> None:
+    """Jahresabschluss (unumkehrbar). Das laufende oder ein künftiges Jahr kann nicht abgeschlossen werden."""
+    if int(year) >= (today or date.today()).year:
+        raise ValueError(f"{year} ist noch nicht vorbei und kann erst nach dem Jahreswechsel abgeschlossen werden.")
     with transaction(con):
         con.execute("INSERT OR IGNORE INTO expense_lock(year) VALUES (?)", (str(year),))
         audit.log(con, "lock_year", "expense", None, {"year": year})
@@ -143,6 +146,9 @@ def lock_year(con: sqlite3.Connection, year: int) -> None:
 def archive_receipt(src: Path | str, exp_date: str) -> tuple[str, str]:
     """Kopiert den Beleg unverändert ins Archiv (schreibgeschützt). Rückgabe (Pfad, SHA-256)."""
     src = Path(src)
+    if config.is_risky_file(src):
+        raise ValueError(f"„{src.name}“ ist ein Programm bzw. Skript und wird nicht als Beleg archiviert. "
+                         "Bitte den Beleg als PDF oder Bild speichern.")
     data = src.read_bytes()
     h = hashlib.sha256(data).hexdigest()
     target_dir = config.archive_dir() / "ausgaben" / (exp_date or "0000")[:4]

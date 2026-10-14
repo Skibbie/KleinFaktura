@@ -11,10 +11,10 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
 
 from app import config
 from app.db import repo
-from app.db.database import company, get_setting
+from app.db.database import company, get_int_setting
 from app.importers import csv_import, hottgenroth, legacy_invoices
 from app.importers.hottgenroth import COMPARE_FIELDS, FIELD_LABELS, ImportItem
-from app.money import fmt_eur, line_total_cents, to_cents, to_decimal, fmt_qty
+from app.money import fmt_eur, fmt_qty, input_cents, input_decimal, line_total_cents
 from app.ui.common import (Ctx, button, check_item, date_edit, date_value, error, hbox, item, make_table, open_file,
                            set_date)
 
@@ -392,7 +392,7 @@ class LegacyReviewDialog(QDialog):
         self.number = QLineEdit(inv.number)
         self.doc_date = date_edit(inv.doc_date)
         self.service_date = date_edit(inv.service_date or inv.doc_date, allow_empty=True)
-        days = int(get_setting(ctx.con, "invoice.payment_days", "14"))
+        days = get_int_setting(ctx.con, "invoice.payment_days", "14")
         from datetime import date as _d, timedelta
         due = (_d.fromisoformat(inv.doc_date) + timedelta(days=days)).isoformat() if inv.doc_date else None
         self.due_date = date_edit(due, allow_empty=True)
@@ -550,8 +550,8 @@ class LegacyReviewDialog(QDialog):
         out = []
         for r in range(self.lines.rowCount()):
             t = lambda c: (self.lines.item(r, c).text() if self.lines.item(r, c) else "").strip()
-            out.append({"title": t(0), "description": t(1).replace("\\n", "\n"), "quantity": str(to_decimal(t(2) or "0")),
-                        "unit": t(3), "unit_price_cents": to_cents(t(4) or "0"), "tax_rate": "0"})
+            out.append({"title": t(0), "description": t(1).replace("\\n", "\n"), "quantity": str(input_decimal(t(2) or "0")),
+                        "unit": t(3), "unit_price_cents": input_cents(t(4) or "0"), "tax_rate": "0"})
         return out
 
     def _recalc(self, *_):
@@ -560,8 +560,8 @@ class LegacyReviewDialog(QDialog):
         ok = True
         for r in range(self.lines.rowCount()):
             try:
-                q = to_decimal(self.lines.item(r, 2).text() or "0")
-                p = to_cents(self.lines.item(r, 4).text() or "0")
+                q = input_decimal(self.lines.item(r, 2).text() or "0")
+                p = input_cents(self.lines.item(r, 4).text() or "0")
                 t = line_total_cents(q, p)
                 total += t
                 self.lines.item(r, 5).setText(fmt_eur(t))
