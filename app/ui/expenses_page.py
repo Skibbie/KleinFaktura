@@ -5,13 +5,12 @@ from datetime import date
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QCompleter, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+from PySide6.QtWidgets import (QComboBox, QCompleter, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
                                QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
                                QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from app.db.database import get_setting, set_setting
 from app.importers import bank_csv
-from app.importers.csv_import import read_table
 from app.money import fmt_date, fmt_eur, input_cents, input_decimal, to_decimal
 from app.services import expenses
 from app.services.expenses import CAT, CATEGORIES

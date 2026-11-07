@@ -178,3 +178,46 @@ def test_sign_release_requires_key(tmp_path, monkeypatch):
     (tmp_path / "a.exe").write_bytes(b"x")
     assert sign_release.main([str(tmp_path / "a.exe")]) == 1
     assert not (tmp_path / "SHA256SUMS.txt").exists()
+
+
+def test_signed_zip_update_and_unlisted_asset(tmp_path, monkeypatch):
+    """Ordnertausch-Update: signiertes ZIP wird entpackt; ein nachträglich angehängtes Asset wird abgelehnt."""
+    private, public = _keypair()
+    rel = tmp_path / "release"
+    rel.mkdir()
+    _zip(rel / "KleinFaktura-9.9.9.zip", {"KleinFaktura/KleinFaktura.exe": "neue exe"})
+    release, files = _signed_release(rel, monkeypatch, private)
+    monkeypatch.setattr(update, "UPDATE_PUBLIC_KEY", public)
+    with pytest.raises(update.UpdateError, match="fehlt in der signierten Prüfsummenliste"):
+        update.download(release, tmp_path / "KleinFaktura")         # ZIP wurde nicht mitsigniert
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import sign_release
+    assert sign_release.main([str(files["KleinFaktura-Setup-9.9.9.exe"]), str(files["KleinFaktura-9.9.9.zip"])]) == 0
+    new_dir = update.download(release, tmp_path / "KleinFaktura")
+    assert new_dir.name == "KleinFaktura.neu" and (new_dir / "KleinFaktura.exe").read_text() == "neue exe"
+
+
+def test_oversized_checksum_list_is_rejected(tmp_path, monkeypatch):
+    big = tmp_path / "SHA256SUMS.txt"
+    big.write_bytes(b"0" * (64 * 1024 + 1))
+    monkeypatch.setattr(update, "_open", lambda url, timeout, accept="": open(big, "rb"))
+    with pytest.raises(update.UpdateError, match="unerwartet groß"):
+        update._read_small({"name": "SHA256SUMS.txt", "browser_download_url": "x"})
+
+
+@pytest.mark.parametrize(("error", "message"), [
+    (404, "kein veröffentlichtes Release"), (403, "Abfragelimit"), (500, "Fehler 500"),
+    ("offline", "nicht erreichbar"),
+])
+def test_github_errors_are_explained(monkeypatch, error, message):
+    import urllib.error
+    import urllib.request
+
+    def fake_urlopen(req, timeout):
+        assert req.get_header("User-agent").startswith("KleinFaktura/")
+        if error == "offline":
+            raise urllib.error.URLError("keine Verbindung")
+        raise urllib.error.HTTPError(req.full_url, error, "x", None, None)
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(update.UpdateError, match=message):
+        update.latest_release()

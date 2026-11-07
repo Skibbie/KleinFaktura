@@ -152,7 +152,7 @@ def _draw_letterhead(c, data: dict, first: bool):
                 iw, ih = img.getSize()
                 h = w * ih / iw
                 c.drawImage(img, LEFT - 2 * mm, PAGE_H - 15 * mm - h, width=w, height=h, mask=None)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 – unlesbares Logo: Beleg ohne Logo statt ohne Beleg
                 pass
         c.setFont(F_REG, 10)
         c.setFillColor(colors.black)

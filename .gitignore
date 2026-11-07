@@ -18,3 +18,4 @@ archiv/
 # Update-Signatur: nie einchecken
 SHA256SUMS.txt*
 *Signaturschluessel*
+.coverage

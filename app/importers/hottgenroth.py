@@ -74,7 +74,8 @@ def _start_localdb(server: str) -> None:
     if not exe:
         return
     instance = server.split("\\", 1)[1]
-    subprocess.run([exe, "start", instance], capture_output=True, timeout=60,
+    # Fehlschlag ist unkritisch: dann meldet der anschließende Verbindungsaufbau den eigentlichen Fehler
+    subprocess.run([exe, "start", instance], capture_output=True, timeout=60, check=False,
                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 

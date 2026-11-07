@@ -1,7 +1,6 @@
 """Regressionstests zur dritten Review-Runde (Anwender, Power-User, Sicherheit) – nur Dummy-Daten."""
 from __future__ import annotations
 
-import os
 import sqlite3
 import zipfile
 from pathlib import Path

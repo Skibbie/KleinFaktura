@@ -206,7 +206,7 @@ def parse_rows(rows: list[list[str]], path: Path, company: dict) -> ParsedInvoic
         inv.doc_type = "angebot"
 
     # Nummer: neben "Rechn…"/"Angebot"/"Nr", sonst erste passende, sonst Dateiname
-    m = re.search(r"(?:rech\w*|angebot\w*|nr\.?|nummer)\s*[:.]?\s*((?:AN)?\d{4}-\d{4,6})", alltext, re.I)
+    m = re.search(r"(?:rech\w*|angebot\w*|nr\.?|nummer)\s*[:.]?\s*((?:AN)?\d{4}-\d{4,6})", alltext, re.IGNORECASE)
     if m:
         inv.number = m.group(1)
     else:
@@ -221,7 +221,7 @@ def parse_rows(rows: list[list[str]], path: Path, company: dict) -> ParsedInvoic
         cells = _nonempty(r)
         if cells and cells[0].lower().startswith(SALUTATION_START):
             sal_idx = i
-            inv.salutation = cells[0] if "," in cells[0] or len(cells) > 1 else cells[0]
+            inv.salutation = cells[0]
             mm = RX_DATE.search(" ".join(cells))
             if mm:
                 inv.doc_date = parse_date(mm.group(1))
@@ -239,7 +239,7 @@ def parse_rows(rows: list[list[str]], path: Path, company: dict) -> ParsedInvoic
     if "leistungsdatum" in low and ("entspricht" in low or "gleich" in low):
         inv.service_date = inv.doc_date
     else:
-        mm = re.search(r"leistungs(?:datum|zeitraum)\s*:?\s*(\d{1,2}\.\d{1,2}\.\d{2,4})", alltext, re.I)
+        mm = re.search(r"leistungs(?:datum|zeitraum)\s*:?\s*(\d{1,2}\.\d{1,2}\.\d{2,4})", alltext, re.IGNORECASE)
         inv.service_date = parse_date(mm.group(1)) if mm else inv.doc_date
 
     # Empfänger: Block direkt vor der Anrede (bzw. vor der ersten PLZ-Zeile)

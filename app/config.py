@@ -114,7 +114,7 @@ def is_risky_file(path) -> bool:
 def is_unc(path) -> bool:
     """Netzwerkpfad (\\\\server\\freigabe) – der bloße Zugriff kann die Windows-Anmeldung an den Server senden."""
     s = str(path or "")
-    return s.startswith("\\\\") or s.startswith("//")
+    return s.startswith(("\\\\", "//"))
 
 
 def inside_archive(path) -> bool:

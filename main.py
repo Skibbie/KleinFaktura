@@ -54,7 +54,7 @@ def _set_taskbar_identity() -> None:
         try:
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(f"{config.APP_NAME}.App")
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110 – nur das Taskleisten-Symbol, für den Start unerheblich
             pass
 
 

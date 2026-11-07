@@ -6,7 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-                               QMessageBox, QPlainTextEdit, QRadioButton, QScrollArea, QTableWidget, QTableWidgetItem,
+                               QMessageBox, QRadioButton, QScrollArea, QTableWidget, QTableWidgetItem,
                                QVBoxLayout, QWidget)
 
 from app import config
@@ -15,8 +15,7 @@ from app.db.database import company, get_int_setting
 from app.importers import csv_import, hottgenroth, legacy_invoices
 from app.importers.hottgenroth import COMPARE_FIELDS, FIELD_LABELS, ImportItem
 from app.money import fmt_eur, fmt_qty, input_cents, input_decimal, line_total_cents
-from app.ui.common import (Ctx, button, check_item, date_edit, date_value, error, hbox, item, make_table, open_file,
-                           set_date)
+from app.ui.common import Ctx, button, check_item, date_edit, date_value, error, hbox, item, make_table, open_file
 
 
 # ======================================================================= Kollision Kunde

@@ -16,7 +16,7 @@ from test_core import _make_ods  # noqa: E402
 @pytest.fixture()
 def gui(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKTURA_DATA_DIR", str(tmp_path / "data"))
-    from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog, QMessageBox
+    from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
     app = QApplication.instance() or QApplication([])
     log = []
     monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.Yes))
@@ -46,7 +46,7 @@ def test_click_through(gui):
     from app.services import documents, payments
     from app.ui import import_dialogs
     from app.ui.customers import CustomerDialog
-    from app.ui.documents_page import DocumentsPage, PaymentDialog, make_dunning
+    from app.ui.documents_page import PaymentDialog, make_dunning
     from app.ui.editor import DocumentEditor
     from app.ui.main_window import MainWindow
     from app.ui.settings_page import SettingsPage

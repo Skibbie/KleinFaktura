@@ -1,0 +1,31 @@
+# Ruff-Prüfung für KleinFaktura: python -m ruff check .
+line-length = 120
+target-version = "py312"
+
+[lint]
+# Zusätzlich zu Ruffs Standardregeln: pauschale except-Blöcke und Importe nach sys.path-Anpassung
+# sollen bewusst (mit noqa und Begründung) gekennzeichnet sein.
+extend-select = ["BLE001", "E402"]
+ignore = [
+    "B023",     # Hilfsfunktionen in Schleifen werden nur im selben Durchlauf aufgerufen
+    "I001",     # kompakte, gruppierte Importblöcke statt einer Zeile pro Name
+    "FURB157",  # Decimal("0.01") als Zeichenkette ist bei Geldbeträgen die bewusste Schreibweise
+    "ISC004",   # mehrzeilige Vorlagentexte sind absichtlich implizit verkettet
+    "RUF100",   # noqa-Kommentare dokumentieren bewusste Ausnahmen, auch für hier nicht aktive Regeln
+    "SIM102",
+    "SIM105",   # try/except/pass ist hier lesbarer als contextlib.suppress
+    "SIM108",
+    "SIM905",   # lange Kürzellisten (Ländercodes) bleiben als Textblock lesbar
+    "SIM112",   # Windows-Umgebungsvariablen sind nicht groß-/kleinschreibungsabhängig
+    "TRY004",   # ValueError ist die Meldung für die Oberfläche, kein Typfehler
+]
+
+[lint.per-file-ignores]
+"tests/**" = [
+    "F811",     # pytest-Fixtures werden importiert und als Parameter wiederverwendet
+    "RUF059",   # nicht benötigte Rückgabewerte beim Entpacken sind in Tests in Ordnung
+    "RUF015",
+    "SIM115",
+    "SIM117",
+    "PLW1510",
+]

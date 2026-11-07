@@ -281,7 +281,7 @@ class Ctx:
         for fn in list(self.listeners):
             try:
                 fn()
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110 – ein fehlerhafter Listener darf die übrigen nicht blockieren
                 pass
 
 
