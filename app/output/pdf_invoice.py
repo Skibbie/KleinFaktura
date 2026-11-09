@@ -285,7 +285,8 @@ def write_document_pdf(data: dict, path: Path | str) -> Path:
         rows.append([_p(str(i), st["cellr"]), Paragraph(desc, st["cell"]), _p(fmt_qty(ln.get("quantity")), st["cellr"]),
                      _p(ln.get("unit", ""), st["cell"]), _p(fmt_eur(ln.get("unit_price_cents")), st["cellr"]),
                      _p(fmt_eur(ln.get("total_cents")), st["cellr"])])
-    widths = [10 * mm, CONTENT_W - 88 * mm, 16 * mm, 18 * mm, 21 * mm, 23 * mm]
+    # Gesamtpreis 24 mm: mit Arial (Fallback ohne Carlito) bricht „Gesamtpreis“ bei 23 mm um (Issue #1)
+    widths = [10 * mm, CONTENT_W - 89 * mm, 16 * mm, 18 * mm, 21 * mm, 24 * mm]
     # splitInRow: eine sehr lange Beschreibung (z.B. eingefügtes Leistungsverzeichnis) darf über die Seite laufen,
     # statt das PDF mit „LayoutError … too large“ abzubrechen
     t = Table(rows, colWidths=widths, repeatRows=1, splitInRow=1)

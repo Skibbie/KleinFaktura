@@ -83,3 +83,6 @@ in E-Mail-Vorlagen zusätzlich `{belegart} {betreff}`, in Mahnungen zusätzlich 
 
 ## Lizenz
 MIT, siehe [LICENSE](LICENSE).
+
+Die beigelegte Schrift Carlito (© tyPoland Łukasz Dziedzic) steht unter der SIL Open Font License 1.1,
+siehe [assets/fonts/OFL.txt](assets/fonts/OFL.txt).

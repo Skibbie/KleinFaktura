@@ -5,6 +5,12 @@ automatisch als Beschreibung übernommen. Neue Einträge zuerst unter `## [Unver
 
 ## [Unveröffentlicht]
 
+## [2.2.2] – 2026-11-09
+
+- Rechnungs-PDF: Die Schrift Carlito liegt jetzt bei, Belege sehen dadurch auf jedem PC gleich aus. Bisher wurde
+  ohne installiertes Carlito Arial verwendet und die Überschrift „Gesamtpreis“ brach um (Issue #1). Die Spalte
+  ist außerdem 1 mm breiter
+
 ## [2.2.1] – 2026-10-14
 
 - Wichtiger Hinweis zu Haftung und Verantwortung (keine Steuerberatung, ohne Gewährleistung, Datensicherung und

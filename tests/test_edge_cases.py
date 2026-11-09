@@ -120,3 +120,32 @@ def test_encrypt_requires_password(small_chunks, tmp_path):
     with pytest.raises(ValueError, match="Passwort"):
         small_chunks.encrypt_file(src, tmp_path / "a.enc", "")
     assert not small_chunks.is_encrypted(tmp_path / "fehlt.enc")
+
+
+def test_carlito_liegt_bei_und_wird_bevorzugt():
+    """Ohne beigelegte Schrift fiel die App auf Arial zurück und „Gesamtpreis“ brach um (Issue #1)."""
+    from app import config
+
+    paths = config.font_paths()
+    fonts = config.ASSETS_DIR / "fonts"
+    assert paths["regular"] == fonts / "Carlito-Regular.ttf"
+    assert paths["bold"] == fonts / "Carlito-Bold.ttf"
+    assert paths["italic"] == fonts / "Carlito-Italic.ttf"
+    assert (fonts / "OFL.txt").exists()
+
+
+def test_tabellenkoepfe_passen_auch_mit_arial():
+    """Auch im Arial-Fallback dürfen die Spaltenüberschriften nicht umbrechen."""
+    from pathlib import Path
+
+    from reportlab.lib.units import mm
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    arial = Path(r"C:\Windows\Fonts\arialbd.ttf")
+    if not arial.exists():
+        pytest.skip("Arial nicht vorhanden")
+    pdfmetrics.registerFont(TTFont("TestArialBd", str(arial)))
+    padding = 6 / mm  # 3 pt links + rechts
+    for text, col_mm in [("Gesamtpreis", 24), ("Einzelpreis", 21), ("Einheit", 18), ("Anzahl", 16)]:
+        assert pdfmetrics.stringWidth(text, "TestArialBd", 10) / mm <= col_mm - padding, text
