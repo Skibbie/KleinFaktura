@@ -1,3 +1,6 @@
+# Laufzeit-Abhängigkeiten (Bereiche). Für Entwicklung und Tests: requirements-dev.txt.
+# Release-Builds installieren ausschließlich die festgeschriebenen Stände mit Prüfsummen aus requirements-build.txt
+# (erzeugt mit tools/lock_requirements.py) – siehe RELEASING.md.
 # < 6.12: PySide6 6.12.0 stürzt beim Beenden des Interpreters ab (Tests mit Exit-Code ≠ 0)
 PySide6>=6.6,<6.12
 pyodbc>=5.0
@@ -8,4 +11,3 @@ pypdf>=4.0
 segno>=1.6
 openpyxl>=3.1
 cryptography>=42
-pytest>=8.0

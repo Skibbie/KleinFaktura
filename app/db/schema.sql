@@ -272,6 +272,11 @@ BEGIN SELECT RAISE(ABORT, 'Das Jahr ist abgeschlossen – Ausgaben sind unverän
 CREATE TRIGGER IF NOT EXISTS trg_expense_lock_delete BEFORE DELETE ON expense
 WHEN EXISTS (SELECT 1 FROM expense_lock WHERE year = substr(OLD.exp_date, 1, 4))
 BEGIN SELECT RAISE(ABORT, 'Das Jahr ist abgeschlossen – Ausgaben sind unveränderbar'); END;
+-- Der Jahresabschluss sperrt auch die Einnahmen des Jahres: keine Zahlung (auch keine Korrekturbuchung) mit einem
+-- Datum im abgeschlossenen Jahr. Spätere Eingänge und Korrekturen werden mit ihrem tatsächlichen Datum gebucht.
+CREATE TRIGGER IF NOT EXISTS trg_payment_lock_insert BEFORE INSERT ON payment
+WHEN EXISTS (SELECT 1 FROM expense_lock WHERE year = substr(NEW.pay_date, 1, 4))
+BEGIN SELECT RAISE(ABORT, 'Das Jahr ist abgeschlossen – Zahlungen können nicht mehr mit einem Datum in diesem Jahr erfasst werden'); END;
 CREATE TRIGGER IF NOT EXISTS trg_expense_lock_no_delete BEFORE DELETE ON expense_lock
 BEGIN SELECT RAISE(ABORT, 'Ein Jahresabschluss kann nicht zurückgenommen werden'); END;
 

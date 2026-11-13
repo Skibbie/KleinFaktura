@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from datetime import date, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 from app.db import repo
@@ -49,7 +50,9 @@ def payment_parts(con: sqlite3.Connection, year: int | None = None) -> list[dict
         if year is None or r["pay_date"][:4] == f"{year:04d}":
             # Entgelt ohne Umsatzsteuer (§ 10 Abs. 1 UStG): bei Regel-Rechnungen anteilig netto
             net = int(r["total_net_cents"] or 0)
-            revenue_net = round(revenue * net / gross) if gross and net != gross else revenue
+            revenue_net = revenue
+            if gross and net != gross:   # kaufmännisch runden wie überall (kein Fließkomma, kein Bankers Rounding)
+                revenue_net = int((Decimal(revenue) * net / gross).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
             out.append({**dict(r), "revenue_cents": revenue, "revenue_net_cents": revenue_net,
                         "other_cents": r["amount_cents"] - revenue})
     out.sort(key=lambda p: (p["pay_date"], p["id"]))
@@ -64,11 +67,22 @@ def list_payments(con: sqlite3.Connection, doc_id: int | None = None) -> list[di
     return [dict(r) for r in rows]
 
 
+def check_year_open(con: sqlite3.Connection, pay_date: str) -> None:
+    """Nach dem Jahresabschluss stehen die Einnahmen des Jahres fest (der Datenbank-Trigger setzt das ebenfalls durch)."""
+    from app.services import expenses
+    year = (pay_date or "")[:4]
+    if expenses.is_locked(con, year):
+        raise ValueError(f"Das Jahr {year} ist abgeschlossen – eine Zahlung mit Datum in {year} kann nicht mehr erfasst "
+                         "werden. Bitte den Zahlungseingang bzw. die Korrektur mit dem tatsächlichen heutigen Datum "
+                         "buchen.")
+
+
 def add_payment(con: sqlite3.Connection, doc_id: int, pay_date: str, amount, method: str = "Überweisung",
                 note: str = "") -> int:
     cents = amount if isinstance(amount, int) else to_cents(amount)
     if cents == 0:
         raise ValueError("Betrag darf nicht 0 sein.")
+    check_year_open(con, pay_date)
     with transaction(con):
         d = documents.get_document(con, doc_id)
         if not d or d["doc_type"] != "rechnung" or d["status"] != "festgeschrieben":

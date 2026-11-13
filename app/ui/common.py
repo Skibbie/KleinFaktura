@@ -6,10 +6,10 @@ import re
 import sqlite3
 from datetime import date
 
-from PySide6.QtCore import QDate, QEvent, QObject, Qt, QTimer
+from PySide6.QtCore import QDate, QEvent, QEventLoop, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QCompleter, QDateEdit, QHBoxLayout, QHeaderView, QLabel,
-                               QMessageBox, QPushButton, QSizePolicy, QTableWidget, QTableWidgetItem, QWidget)
+                               QMessageBox, QProgressDialog, QPushButton, QSizePolicy, QTableWidget, QTableWidgetItem, QWidget)
 
 from app.ui.theme import ACTION as ACCENT, INK_2, SCALE, STYLE  # noqa: E402,F401
 
@@ -283,6 +283,50 @@ class Ctx:
                 fn()
             except Exception:  # noqa: BLE001, S110 – ein fehlerhafter Listener darf die übrigen nicht blockieren
                 pass
+
+
+class _Result(QObject):
+    done = Signal(object, object)  # Ergebnis, Fehler – wird im GUI-Thread zugestellt
+
+
+def in_background(fn, on_done) -> _Result:
+    """Führt fn() in einem Thread aus und meldet (Ergebnis, Fehler) im GUI-Thread an on_done.
+    Die Rückgabe muss der Aufrufer halten, bis das Signal angekommen ist."""
+    import threading
+    res = _Result()
+    res.done.connect(on_done, Qt.QueuedConnection)  # Rückmeldung immer im GUI-Thread (Dialoge)
+
+    def run():
+        try:
+            res.done.emit(fn(), None)
+        except Exception as e:  # noqa: BLE001 – der Fehler wird an den Aufrufer weitergereicht
+            res.done.emit(None, e)
+    threading.Thread(target=run, daemon=True).start()
+    return res
+
+
+def run_with_progress(parent, title: str, text: str, fn):
+    """Führt fn() im Hintergrund aus, zeigt solange ein Wartefenster und gibt das Ergebnis zurück (Fehler aus fn
+    werden hier erneut ausgelöst). Die Oberfläche bleibt dabei bedienbar gezeichnet statt „Keine Rückmeldung“.
+    fn darf keine Qt-Fenster und nicht die Datenbankverbindung des GUI-Threads benutzen."""
+    dlg = QProgressDialog(text, "", 0, 0, parent)
+    dlg.setWindowTitle(title)
+    dlg.setCancelButton(None)
+    dlg.setWindowModality(Qt.WindowModal)
+    dlg.setMinimumDuration(400)   # kurze Vorgänge ohne aufblitzendes Fenster
+    loop = QEventLoop()
+    out: dict = {}
+
+    def done(result, err):
+        out.update(result=result, err=err)
+        loop.quit()
+    keep = in_background(fn, done)  # noqa: F841 – Referenz halten
+    loop.exec()
+    dlg.reset()
+    dlg.deleteLater()
+    if out["err"] is not None:
+        raise out["err"]
+    return out["result"]
 
 
 def today_iso() -> str:

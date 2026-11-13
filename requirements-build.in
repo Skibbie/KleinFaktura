@@ -1,0 +1,5 @@
+# Eingabe für requirements-build.txt (Release-Build): Laufzeit + Tests + PyInstaller.
+# Nach Änderungen: python tools/lock_requirements.py
+-r requirements.txt
+pytest>=8.0
+pyinstaller>=6.0

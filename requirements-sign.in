@@ -1,0 +1,3 @@
+# Eingabe für requirements-sign.txt: der Signier-Job des Releases braucht nur cryptography.
+# Nach Änderungen: python tools/lock_requirements.py
+cryptography>=42

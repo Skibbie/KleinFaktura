@@ -547,7 +547,8 @@ class EuerPage(QWidget):
         if v["missing_receipts"]:
             warns.append(f"Bei {count(v['missing_receipts'], 'Ausgabe', 'Ausgaben')} in {y} fehlt noch der Beleg.")
         if v["locked"]:
-            warns.append(f"Das Jahr {y} ist abgeschlossen, Ausgaben und Fahrten sind unveränderbar.")
+            warns.append(f"Das Jahr {y} ist abgeschlossen: Ausgaben und Fahrten sind unveränderbar, Zahlungen mit "
+                         f"einem Datum in {y} können nicht mehr erfasst werden.")
         self.warn.setText(" ".join(warns))
         self.warn.setVisible(bool(warns))
 
@@ -588,8 +589,11 @@ class EuerPage(QWidget):
                                                               "Jahreswechsel abgeschlossen werden. Für das Vorjahr "
                                                               "bitte oben das Jahr umstellen.")
             return
-        if confirm(self, "Jahr abschließen", f"Ausgaben und Fahrten {y} abschließen?\n\nDanach können Ausgaben und Fahrten dieses Jahres nicht mehr "
-                   "geändert, gelöscht oder nachgetragen werden (GoBD). Das lässt sich nicht rückgängig machen. "
+        if confirm(self, "Jahr abschließen", f"Das Jahr {y} abschließen?\n\nDanach können Ausgaben und Fahrten dieses Jahres nicht mehr "
+                   "geändert, gelöscht oder nachgetragen werden (GoBD), und es lassen sich keine Zahlungen mehr mit "
+                   f"einem Datum in {y} erfassen – die Einnahmen des Jahres stehen damit fest. Spätere "
+                   "Zahlungseingänge und Korrekturen werden mit ihrem tatsächlichen Datum gebucht. "
+                   "Das lässt sich nicht rückgängig machen. "
                    "Am besten erst, wenn die Steuererklärung abgegeben ist."):
             expenses.lock_year(self.ctx.con, y)
             self.ctx.changed()

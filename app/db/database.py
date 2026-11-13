@@ -20,6 +20,34 @@ SCHEMA_VERSION = 2
 class NewerDatabaseError(RuntimeError):
     """Die Datenbank wurde von einer neueren Programmversion angelegt."""
 
+
+def add_column(con: sqlite3.Connection, table: str, column: str, declaration: str) -> None:
+    """Spalte ergänzen, falls sie fehlt (für Umbauschritte; mehrfaches Ausführen schadet nicht)."""
+    if column not in {r[1] for r in con.execute(f'PRAGMA table_info("{table}")')}:
+        con.execute(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {declaration}')
+
+
+# Umbauschritte für bestehende Datenbanken: Zielversion -> Funktion(con). schema.sql legt nur fehlende Tabellen,
+# Indizes, Trigger und Sichten an (CREATE … IF NOT EXISTS) – eine neue Spalte in einer vorhandenen Tabelle, geänderte
+# Spalten oder umzuschreibende Daten brauchen hier einen Schritt. Regeln:
+# - SCHEMA_VERSION erhöhen und genau einen Schritt für die neue Version eintragen (ab Version 3 Pflicht, siehe Test).
+# - Der Schritt läuft vor schema.sql, ohne Schutz-Trigger, in einer Transaktion mit allen übrigen Schritten: scheitert
+#   einer, bleibt die Datenbank auf dem alten Stand (Kopie liegt zusätzlich unter vor-update\).
+# - Neue Spalten zusätzlich in schema.sql eintragen (für neu angelegte Datenbanken) und hier mit add_column ergänzen.
+# Versionen 1 und 2 brachten nur neue Tabellen und brauchen keinen Schritt.
+MIGRATIONS: dict = {}
+
+
+def migrate(con: sqlite3.Connection, current: int, target: int | None = None) -> None:
+    """Hebt eine bestehende Datenbank von `current` auf `target` (Standard: SCHEMA_VERSION) – alles oder nichts."""
+    target = SCHEMA_VERSION if target is None else target
+    with transaction(con):
+        for version in range(current + 1, target + 1):
+            step = MIGRATIONS.get(version)
+            if step is not None:
+                step(con)
+        con.execute(f"PRAGMA user_version = {int(target)}")
+
 DEFAULT_SETTINGS: dict[str, str] = {
     # Firmenstammdaten: werden beim ersten Start unter „Einstellungen“ erfasst (nicht im Quellcode)
     "company.name": "",
@@ -59,13 +87,13 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "dunning.fee_3": "10",
     "dunning.days": "10",
     # Archiv / Backup
-    "retention.years": "8",
     "backup.dir": str(config.default_backup_dir()),
     "backup.keep_daily": "30",
     "backup.keep_monthly": "12",
     "backup.last": "",
     "backup.encrypt": "0",       # Sicherungen mit Passwort verschlüsseln (AES-256)
-    "backup.password": "",
+    "backup.password": "",       # per Windows-DPAPI geschützt abgelegt (app.services.secret)
+    "backup.fingerprint": "",    # Prüfsumme des Datenstands bei der letzten Sicherung
     # E-Mail-Versand über Thunderbird (Pfad leer = automatisch suchen)
     "mail.thunderbird_path": "",
     "mail.subject_rechnung": "{belegart} {belegnr} vom {datum}",
@@ -204,10 +232,13 @@ def init_db(con: sqlite3.Connection) -> None:
     # entschärfte gleichnamige Trigger (z.B. aus einer präparierten Sicherung) noch fremde Trigger/Sichten bestehen
     for kind, name in con.execute("SELECT type, name FROM sqlite_master WHERE type IN ('trigger','view')").fetchall():
         con.execute(f'DROP {kind.upper()} IF EXISTS "{name}"')
+    if current < SCHEMA_VERSION and not is_new:
+        migrate(con, current)        # vor schema.sql: dessen Indizes/Trigger können neue Spalten voraussetzen
     con.executescript(schema)
-    if current < SCHEMA_VERSION:
+    if is_new:
         con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     with transaction(con):
+        _protect_secrets(con)
         if not is_new and con.execute("SELECT 1 FROM settings WHERE key='profile'").fetchone() is None:
             # Datenbank aus der Zeit vor den Branchenprofilen (EEE-Faktura): war immer Energieberatung,
             # deren Startartikel und Fahrtanlässe sind schon vorhanden
@@ -225,6 +256,14 @@ def init_db(con: sqlite3.Connection) -> None:
         if is_new:
             apply_profile(con, get_setting(con, "profile"))
         _seed_once(con)  # nach den Standard-Textbausteinen (die nur in leere Tabellen kommen)
+
+
+def _protect_secrets(con: sqlite3.Connection) -> None:
+    """Sicherungspasswort aus älteren Versionen (Klartext) geschützt ablegen."""
+    from app.services import secret
+    row = con.execute("SELECT value FROM settings WHERE key='backup.password'").fetchone()
+    if row and row[0] and not secret.is_protected(row[0]):
+        set_setting(con, "backup.password", secret.protect(row[0]))
 
 
 def _seed_once(con: sqlite3.Connection) -> None:

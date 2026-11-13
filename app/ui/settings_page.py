@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, Q
 from app import config
 from app.db.database import PROFILES, apply_profile, get_setting, set_setting, transaction
 from app.money import input_decimal
-from app.services import audit, kleinunternehmer, mail, numbering
+from app.services import audit, backup, kleinunternehmer, mail, numbering, secret
 from app.ui import update_ui
 from app.ui.common import CANCEL, SAVE, Ctx, ask_save, button, confirm, error, hbox, page_title
 
@@ -38,7 +38,6 @@ NUMERIC_FIELDS = {
     "expense.km_rate": ("Kilometerpauschale € je km", "eur", 0),
     "backup.keep_daily": ("Tägliche Sicherungen behalten", "int", 1),
     "backup.keep_monthly": ("Monatliche Sicherungen behalten", "int", 0),
-    "retention.years": ("Aufbewahrungsfrist (Jahre)", "int", 1),
 }
 
 
@@ -195,19 +194,18 @@ class SettingsPage(QWidget):
         lay.addWidget(g)
 
         lay = self._tab("Datensicherung")
-        g = QGroupBox("Datensicherung && Aufbewahrung")
+        g = QGroupBox("Datensicherung")
         f = QFormLayout(g)
         self.edits["backup.dir"] = QLineEdit(get_setting(ctx.con, "backup.dir"))
         f.addRow("Sicherungsordner", hbox(self.edits["backup.dir"], button("…", self.pick_backup_dir)))
         for key, label in [("backup.keep_daily", "Tägliche Sicherungen behalten"),
-                           ("backup.keep_monthly", "Monatliche Sicherungen behalten"),
-                           ("retention.years", "Aufbewahrungsfrist (Jahre)")]:
+                           ("backup.keep_monthly", "Monatliche Sicherungen behalten")]:
             self.edits[key] = QLineEdit(get_setting(ctx.con, key))
             f.addRow(label, self.edits[key])
         self.checks["backup.encrypt"] = QCheckBox("Sicherungen mit Passwort verschlüsseln (AES-256)")
         self.checks["backup.encrypt"].setChecked(get_setting(ctx.con, "backup.encrypt") == "1")
         f.addRow("", self.checks["backup.encrypt"])
-        self.edits["backup.password"] = QLineEdit(get_setting(ctx.con, "backup.password"))
+        self.edits["backup.password"] = QLineEdit(backup.password(ctx.con))
         self.edits["backup.password"].setEchoMode(QLineEdit.Password)
         self.edits["backup.password"].setPlaceholderText("mindestens 8 Zeichen – bitte zusätzlich sicher notieren")
         f.addRow("Passwort der Sicherung", self.edits["backup.password"])
@@ -280,7 +278,7 @@ class SettingsPage(QWidget):
 
     def _reload_values(self):
         for key, e in self.edits.items():
-            e.setText(get_setting(self.ctx.con, key))
+            e.setText(self._stored(key))
         for key, t in self.texts.items():
             t.setPlainText(get_setting(self.ctx.con, key))
         for key, c in self.checks.items():
@@ -292,6 +290,11 @@ class SettingsPage(QWidget):
         self.zugferd.setChecked(get_setting(self.ctx.con, "invoice.zugferd_default") == "1")
         self.update_check.setChecked(get_setting(self.ctx.con, update_ui.CHECK_SETTING, "1") == "1")
         self._clean = self._snapshot()
+
+    def _stored(self, key: str) -> str:
+        """Gespeicherter Wert eines Eingabefelds; Geheimnisse liegen geschützt in der Datenbank (secret)."""
+        value = get_setting(self.ctx.con, key)
+        return secret.unprotect(value) if key in SECRET_KEYS else value
 
     def confirm_leave(self) -> bool:
         if self._snapshot() == self._clean:
@@ -404,9 +407,16 @@ class SettingsPage(QWidget):
         with transaction(self.ctx.con):
             changes = {}
             for key, e in self.edits.items():
-                v = e.text() if key in SECRET_KEYS else e.text().strip()
+                if key in SECRET_KEYS:
+                    # Passwort nie ins Protokoll und nur geschützt in die Datenbank; unverändert bleibt es stehen
+                    if e.text() != self._stored(key) or not secret.is_protected(get_setting(self.ctx.con, key)):
+                        if e.text() != self._stored(key):
+                            changes[key] = "(geändert)"
+                        set_setting(self.ctx.con, key, secret.protect(e.text()))
+                    continue
+                v = e.text().strip()
                 if v != get_setting(self.ctx.con, key):
-                    changes[key] = "(geändert)" if key in SECRET_KEYS else v   # Passwort nie ins Protokoll
+                    changes[key] = v
                 set_setting(self.ctx.con, key, v)
             values = [(k, t.toPlainText().strip()) for k, t in self.texts.items()]
             values += [(k, "1" if c.isChecked() else "0") for k, c in self.checks.items()]

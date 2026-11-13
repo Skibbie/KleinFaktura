@@ -557,6 +557,45 @@ def is_cancelled(con: sqlite3.Connection, invoice_id: int) -> bool:
         (invoice_id,)).fetchone())
 
 
+def verify_against_log(con: sqlite3.Connection) -> list[str]:
+    """Gleicht die festgeschriebenen Belege mit ihren Einträgen im Protokoll ab (Nummer, Betrag, Prüfsummen).
+    Das Protokoll ist über die Hash-Kette gesichert; wer einen Beleg direkt in der Datenbank ändert (an den Sperren
+    vorbei), müsste auch die Kette neu rechnen – dieser Abgleich macht den einfachen Eingriff sichtbar."""
+    logged: dict[int, tuple[str, dict]] = {}
+    for r in con.execute("SELECT entity_id, action, data FROM audit_log WHERE entity='document' "
+                         "AND action IN ('finalize','import') ORDER BY id"):
+        try:
+            data = json.loads(r["data"] or "{}")
+        except ValueError:
+            data = {}
+        logged[r["entity_id"]] = (r["action"], data if isinstance(data, dict) else {})
+    # Belege aus der Zeit vor dem Protokoll (sehr alte Datenbestände) haben keinen Eintrag und werden nicht bemängelt
+    first = (con.execute("SELECT MIN(ts) FROM audit_log").fetchone()[0] or "").replace("T", " ")
+    problems, seen = [], set()
+    for d in con.execute("SELECT id, number, total_gross_cents, pdf_sha256, xml_sha256, import_sha256, finalized_at "
+                         "FROM document WHERE status='festgeschrieben' ORDER BY number"):
+        seen.add(d["id"])
+        entry = logged.get(d["id"])
+        if entry is None:
+            if first and (d["finalized_at"] or "") >= first:
+                problems.append(f"{d['number']}: kein Festschreibe-Eintrag im Protokoll")
+            continue
+        action, data = entry
+        checks = [("number", d["number"], "Belegnummer"), ("gross", d["total_gross_cents"], "Betrag")]
+        if action == "finalize":
+            checks += [("pdf_sha256", d["pdf_sha256"], "PDF-Prüfsumme"), ("xml_sha256", d["xml_sha256"], "XML-Prüfsumme")]
+        else:
+            checks.append(("sha256", d["import_sha256"], "Prüfsumme der Originaldatei"))
+        for key, actual, label in checks:
+            if key in data and data[key] != actual:
+                problems.append(f"{d['number']}: {label} weicht vom Protokoll ab")
+    for doc_id, (_action, data) in logged.items():
+        if doc_id not in seen:
+            problems.append(f"{data.get('number') or doc_id}: laut Protokoll festgeschrieben, in der Datenbank aber "
+                            "nicht (mehr) als festgeschriebener Beleg vorhanden")
+    return problems
+
+
 def verify_archive(con: sqlite3.Connection) -> list[str]:
     """Prüft, ob alle Archivdateien (Belege, Mahnungen, Ausgabenbelege) vorhanden und unverändert sind."""
     files = []
