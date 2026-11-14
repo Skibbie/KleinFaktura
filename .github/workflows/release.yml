@@ -48,7 +48,7 @@ jobs:
           "version=$app" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Abhängigkeiten (festgeschrieben, mit Prüfsummen)
-        run: python -m pip install --require-hashes --only-binary :all: -r requirements-build.txt
+        run: "python -m pip install --require-hashes --only-binary :all: -r requirements-build.txt"
 
       - name: Tests
         run: python -m pytest -q tests
@@ -117,7 +117,7 @@ jobs:
           path: release
 
       - name: Abhängigkeiten (nur cryptography, mit Prüfsummen)
-        run: python -m pip install --require-hashes --only-binary :all: -r requirements-sign.txt
+        run: "python -m pip install --require-hashes --only-binary :all: -r requirements-sign.txt"
 
       - name: Signieren
         # Ohne das Secret bricht das Release hier ab; installierte Programme lehnen unsignierte Updates ab.
