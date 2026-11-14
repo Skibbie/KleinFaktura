@@ -460,6 +460,7 @@ def test_update_ui(gui):
 
     newer = update.Release("99.0.0", "Neues")
     offered = []
+    real_offer = update_ui.offer
     mp.setattr(update, "latest_release", lambda: newer)
     mp.setattr(update_ui, "offer", lambda w, r: offered.append(r.version))
     update_ui.check_now(win)
@@ -470,7 +471,7 @@ def test_update_ui(gui):
             break
         threading.Event().wait(0.02)
     assert offered == ["99.0.0", "99.0.0"]
-    mp.undo()                                                # offer wieder echt (übrige Ersetzungen neu setzen)
+    mp.setattr(update_ui, "offer", real_offer)
 
     mp.setattr(QMessageBox, "exec", lambda self: 0)
     installs = []

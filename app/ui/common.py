@@ -294,14 +294,26 @@ def in_background(fn, on_done) -> _Result:
     Die Rückgabe muss der Aufrufer halten, bis das Signal angekommen ist."""
     import threading
     res = _Result()
-    res.done.connect(on_done, Qt.QueuedConnection)  # Rückmeldung immer im GUI-Thread (Dialoge)
+    # Ein Qt-Objekt darf nur in dem Thread zerstört werden, dem es gehört (GUI-Thread). Der Hintergrund-Thread
+    # bekommt es deshalb nur als Argument (Thread.run gibt es am Ende frei), und der GUI-Thread hält es, bis der
+    # Thread sicher beendet ist; freigegeben wird es erst nach der Signalzustellung.
+    holder = [res]
 
-    def run():
+    def run(obj):
         try:
-            res.done.emit(fn(), None)
+            obj.done.emit(fn(), None)
         except Exception as e:  # noqa: BLE001 – der Fehler wird an den Aufrufer weitergereicht
-            res.done.emit(None, e)
-    threading.Thread(target=run, daemon=True).start()
+            obj.done.emit(None, e)
+    thread = threading.Thread(target=run, args=(res,), daemon=True)
+
+    def finish(result, err):
+        thread.join(5)                       # der Thread hat seinen Verweis danach sicher abgegeben
+        try:
+            on_done(result, err)
+        finally:
+            QTimer.singleShot(0, holder.clear)   # nicht während der eigenen Signalzustellung freigeben
+    res.done.connect(finish, Qt.QueuedConnection)  # Rückmeldung immer im GUI-Thread (Dialoge)
+    thread.start()
     return res
 
 
