@@ -5,6 +5,33 @@ automatisch als Beschreibung übernommen. Neue Einträge zuerst unter `## [Unver
 
 ## [Unveröffentlicht]
 
+## [2.2.3] – 2026-11-14
+
+- Datensicherung: Beim Beenden wird jetzt immer gesichert, wenn sich seit der letzten Sicherung etwas geändert
+  hat – bisher nur beim ersten Beenden am Tag, später am selben Tag erstellte Rechnungen fehlten dann bis zum
+  nächsten Tag in jeder Sicherung. Jede Sicherung wird nach dem Schreiben geprüft (Datenbank fehlerfrei, ZIP
+  lesbar). Belege werden unkomprimiert abgelegt, die Sicherung läuft im Hintergrund mit Wartefenster
+- Jahresabschluss: Nach dem Abschluss lassen sich keine Zahlungen mehr mit einem Datum im abgeschlossenen Jahr
+  erfassen, die Einnahmen des Jahres stehen damit fest. Spätere Eingänge und Korrekturen werden mit ihrem
+  tatsächlichen Datum gebucht
+- Sicherungspasswort: wird geschützt (Windows-DPAPI, an das Benutzerkonto gebunden) statt im Klartext
+  gespeichert; vorhandene Passwörter werden beim ersten Start umgestellt. Nach einem PC- oder Benutzerwechsel
+  muss es einmal neu eingetragen werden. Eine Rücksicherung übernimmt Verschlüsselung und Passwort nicht mehr
+  aus der Sicherung
+- Integritätsprüfung: gleicht zusätzlich jeden festgeschriebenen Beleg mit seinem Protokolleintrag ab (Nummer,
+  Betrag, Prüfsummen) und prüft die Datenbankdatei
+- E-Rechnung: Ohne USt-IdNr. wird die Steuernummer zusätzlich als Verkäuferkennung ausgegeben, wie die
+  EN 16931 es verlangt (Regel BR-CO-26). Betraf vor allem Kleinunternehmer
+- Altbeleg-Import: Ein Beleg mit dem Wort „Abgleich“ (z.B. „Hydraulischer Abgleich“) übernahm das
+  Rechnungsdatum als Leistungsdatum, auch wenn ein anderes Leistungsdatum genannt war
+- Anteiliges Nettoentgelt bei Teilzahlungen von Regel-Rechnungen wird kaufmännisch gerundet (zählt für die
+  Kleinunternehmergrenze)
+- „Jetzt nach Updates suchen“ friert das Fenster nicht mehr ein
+- Entfernt: die nicht verwendete Einstellung „Aufbewahrungsfrist (Jahre)“
+- Technik: Umbauschritte für künftige Datenbankänderungen, abgesicherter Release-Ablauf (festgeschriebene
+  Abhängigkeiten mit Prüfsummen, Signieren in eigenem Schritt), Prüfung der E-Rechnungen gegen die EN 16931
+  und PDF/A-3 in der automatischen Prüfung, deutlich mehr Tests
+
 ## [2.2.2] – 2026-11-09
 
 - Rechnungs-PDF: Die Schrift Carlito liegt jetzt bei, Belege sehen dadurch auf jedem PC gleich aus. Bisher wurde

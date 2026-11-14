@@ -2,7 +2,8 @@
 rem Erstellt eine eigenständige KleinFaktura.exe (Ordner dist\KleinFaktura) und, falls Inno Setup 6 installiert
 rem ist, den Installer dist\KleinFaktura-Setup-X.Y.Z.exe
 cd /d "%~dp0"
-python -m pip install --upgrade pyinstaller
+rem Gleiche Paketstaende wie der Release-Build (mit Pruefsummen, siehe RELEASING.md)
+python -m pip install --require-hashes --only-binary :all: -r requirements-build.txt || goto :eof
 python tools\make_splash.py || goto :eof
 python -m PyInstaller --noconfirm --windowed --name KleinFaktura --icon assets\icon.ico --splash build\splash.png ^
   --add-data "assets;assets" --add-data "app\db\schema.sql;app\db" --add-data "docs;docs" ^

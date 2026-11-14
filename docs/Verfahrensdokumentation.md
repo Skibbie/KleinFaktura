@@ -41,7 +41,8 @@
 9. **Ausgaben** – Erfassung im Ausgabenbuch (Datum, Lieferant, Kategorie, Bruttobetrag) mit Beleg; der Beleg
    wird unverändert und schreibgeschützt mit SHA-256-Prüfsumme archiviert (`archiv\ausgaben\JJJJ\`).
    Änderungen und Löschungen werden mit altem und neuem Wert protokolliert. Nach Abgabe der Steuererklärung
-   wird das Jahr abgeschlossen; danach lassen sich die Ausgaben dieses Jahres im Programm nicht mehr ändern.
+   wird das Jahr abgeschlossen; danach lassen sich Ausgaben und Fahrten dieses Jahres im Programm nicht mehr
+   ändern, und es können keine Zahlungen mit einem Datum in diesem Jahr mehr erfasst werden.
    Papierbelege werden […aufbewahrt / gescannt, Scanvorgang beschreiben…].
 10. **Fahrten** – Betriebliche Fahrten mit dem privaten Pkw werden zeitnah im Reiter „Fahrten“ erfasst
    (Datum, Kunde/Objekt, Zieladresse, Anlass, gefahrene Kilometer, ggf. zugehöriges Angebot/Rechnung).
@@ -60,7 +61,8 @@
   Zahlungen, Mahnungen und Protokolleinträge; Nummernkreise können nicht zurückgesetzt werden. Die Trigger
   werden bei jedem Programmstart aus der mitgelieferten Definition neu angelegt.
 - Protokoll: jede relevante Aktion wird in einem Änderungsprotokoll mit Hash-Kette (SHA-256) festgehalten;
-  „Integrität prüfen“ erkennt nachträgliche Änderungen an Protokoll und Archivdateien. Anzahl der Einträge und
+  „Integrität prüfen“ erkennt nachträgliche Änderungen an Protokoll und Archivdateien, gleicht jeden
+  festgeschriebenen Beleg mit seinem Protokolleintrag ab (Nummer, Betrag, Prüfsummen) und prüft die Datenbankdatei. Anzahl der Einträge und
   letzter Hash (Kettenkopf) werden in jeder Datensicherung (`INFO.txt`) und im GoBD-Datenexport festgehalten;
   ein Abgleich mit älteren Sicherungen macht auch das Entfernen der letzten Einträge erkennbar.
 - **Grenzen der Schutzwirkung**: Die Sperren wirken gegen Änderungen über das Programm. Wer direkten
@@ -68,15 +70,19 @@
   Dateiattribut, Prüfsummen und Hash-Kette liegen in derselben Datenbank). Solche Eingriffe sind nur teilweise
   erkennbar. Ergänzende organisatorische Maßnahmen: Zugriff auf das Windows-Benutzerkonto beschränken,
   Datensicherungen getrennt und unveränderbar aufbewahren (z.B. externer Datenträger, Versionierung).
-- E-Rechnung: ZUGFeRD/Factur-X Profil EN 16931 (CII), eingebettet in PDF/A-3, XSD-geprüft.
+- E-Rechnung: ZUGFeRD/Factur-X Profil EN 16931 (CII), eingebettet in PDF/A-3, XSD-geprüft. Beispielrechnungen
+  werden bei jeder Programmänderung automatisch gegen die Geschäftsregeln der EN 16931 und PDF/A-3 geprüft.
 
 ## 4. Betriebsdokumentation
-- **Datensicherung**: automatisch täglich beim Beenden sowie manuell; ZIP mit Datenbank und Archiv nach
+- **Datensicherung**: automatisch beim Beenden (täglich und nach jeder Änderung) sowie manuell; jede Sicherung
+  wird nach dem Schreiben geprüft. ZIP mit Datenbank und Archiv nach
   `[…Sicherungsordner…]`; Aufbewahrung 30 tägliche + 12 monatliche Sicherungen.
   Zusätzliche Sicherung […externe Festplatte, Rhythmus…].
 - **Rücksicherung**: über „Export & Sicherung → Aus Sicherung wiederherstellen“; vorheriger Stand wird aufbewahrt.
   Test der Rücksicherung zuletzt am […Datum…].
 - **Zugriffsschutz**: Windows-Benutzerkonto mit Passwort […], Festplattenverschlüsselung […BitLocker ja/nein…].
+  Verschlüsselte Sicherungen: Passwort getrennt vom PC aufbewahrt […wo?…]; im Programm ist es an das
+  Windows-Benutzerkonto gebunden gespeichert.
 - **Aufbewahrung**: Rechnungen 8 Jahre (§ 147 AO i. d. F. BEG IV, ab Ende des Kalenderjahres), Handels-/
   Geschäftsbriefe 6 Jahre. Vor Löschung alter Daten Fristen prüfen. […bitte mit Steuerberater abstimmen…]
 - **Datenzugriff Finanzverwaltung**: „Datenexport für Betriebsprüfung“ erzeugt CSV-Dateien aller Belege,
