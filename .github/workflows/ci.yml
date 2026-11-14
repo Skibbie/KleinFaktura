@@ -6,16 +6,72 @@ on:
     tags-ignore: ["v*"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install -r requirements.txt
-      - run: python -m pytest -q tests
+          cache-dependency-path: requirements*.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Ruff
+        run: python -m ruff check .
+      - name: Tests mit Abdeckung
+        run: python -m pytest -q tests --cov=app --cov-report=term --cov-fail-under=85
         env:
           QT_QPA_PLATFORM: offscreen
+      - name: Typprüfung (Hinweise, blockiert nicht)
+        continue-on-error: true
+        run: python -m mypy app
+
+  erechnung:
+    # Beispielrechnungen (Kleinunternehmer, Regelbesteuerung 7 %/19 %, Storno) erzeugen und mit Mustang prüfen:
+    # Geschäftsregeln der EN 16931 (Schematron) und PDF/A-3 – die XSD-Prüfung im Programm deckt beides nicht ab.
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      MUSTANG_VERSION: "2.26.0"
+      MUSTANG_SHA256: "42d7868cb68264874a7b8cab4c3587b03b23ccc7cd72373da917f66758bb9736"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: python -m pip install -r requirements.txt
+      - name: Beispielrechnungen erzeugen
+        run: python tools/make_einvoice_samples.py build/erechnung
+      - name: Mustang laden (Version und Prüfsumme festgelegt)
+        run: |
+          $url = "https://github.com/ZUGFeRD/mustangproject/releases/download/core-$env:MUSTANG_VERSION/Mustang-CLI-$env:MUSTANG_VERSION.jar"
+          Invoke-WebRequest -Uri $url -OutFile build/mustang.jar
+          $hash = (Get-FileHash build/mustang.jar -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:MUSTANG_SHA256) { throw "Prüfsumme von Mustang stimmt nicht: $hash" }
+      - name: E-Rechnungen prüfen
+        run: |
+          $failed = @()
+          foreach ($pdf in Get-ChildItem build/erechnung/*.pdf) {
+            $report = (& java -jar build/mustang.jar --no-notices --action validate --source $pdf.FullName 2>&1 | Out-String)
+            if ($report -match '<summary status="valid"') {
+              Write-Host "gültig: $($pdf.Name)"
+            } else {
+              Write-Host "::group::Prüfbericht $($pdf.Name)"
+              Write-Host $report
+              Write-Host "::endgroup::"
+              $failed += $pdf.Name
+            }
+          }
+          if ($failed) { throw "Nicht gültig: $($failed -join ', ')" }

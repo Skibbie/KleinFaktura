@@ -60,8 +60,10 @@ def unit_code(unit: str) -> str:
 
 
 def _party(parent, tag, name, street, zip_, city, country, email=None, tax_number=None, vat_id=None,
-           contact=None, phone=None):
+           contact=None, phone=None, party_id=None):
     p = _sub(parent, tag)
+    if party_id:
+        _sub(p, "ram:ID", party_id)
     _sub(p, "ram:Name", name)
     if contact or phone or (email and tag.endswith("SellerTradeParty")):
         c = _sub(p, "ram:DefinedTradeContact")
@@ -146,7 +148,11 @@ def build_cii_xml(data: dict) -> bytes:
         _sub(ag, "ram:BuyerReference", rec["buyer_reference"])
     _party(ag, "ram:SellerTradeParty", comp.get("name"), comp.get("street"), comp.get("zip"), comp.get("city"),
            comp.get("country"), email=comp.get("email"), tax_number=comp.get("tax_number"), vat_id=comp.get("vat_id"),
-           contact=comp.get("owner"), phone=comp.get("phone"))
+           contact=comp.get("owner"), phone=comp.get("phone"),
+           # EN 16931 (BR-CO-26) verlangt eine Verkäuferkennung, eine Registernummer oder die USt-IdNr. Die
+           # Steuernummer allein (BT-32) genügt dafür nicht: Kleinunternehmer ohne USt-IdNr. erhalten sie deshalb
+           # zusätzlich als Verkäuferkennung (BT-29).
+           party_id=None if comp.get("vat_id") else comp.get("tax_number"))
     buyer_name = rec.get("company") or " ".join(x for x in [rec.get("first_name"), rec.get("last_name")] if x) \
         or (rec.get("lines") or ["Kunde"])[0]
     _party(ag, "ram:BuyerTradeParty", buyer_name, rec.get("street"), rec.get("zip"), rec.get("city"), rec.get("country"),
@@ -257,11 +263,3 @@ def embed_zugferd(data: dict, pdf_path: Path | str) -> bytes:
                                           pdf_metadata=meta, lang="de-DE")
     pdf_path.write_bytes(result)
     return xml
-
-
-def build_xrechnung_xml(data: dict) -> bytes:
-    """XRechnung (CII-Syntax) – gleiche Struktur, anderer Spezifikationsbezeichner."""
-    xml = build_cii_xml(data).decode("utf-8")
-    xml = xml.replace("urn:cen.eu:en16931:2017</ram:ID>",
-                      "urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0</ram:ID>", 1)
-    return xml.encode("utf-8")

@@ -51,7 +51,7 @@ Beim ersten Wählen eines Profils kommen dessen Startwerte dazu. Ein Wechsel lö
 | Fahrten | Fahrtennachweis für den Privat-Pkw (Datum, Kunde/Objekt, Ziel, Anlass, km, verknüpfte Rechnung), Kilometerpauschale je Fahrt gespeichert, km-Vorschlag aus der letzten Fahrt zum selben Ziel, Excel-Export; Summe fließt in die EÜR-Werte |
 | EÜR-Werte | Jahressummen je EÜR-Bereich zum Übertragen in die Steuersoftware, Abhakliste, Excel-Export |
 | Export | Umsatzliste + Einnahmen (Excel/CSV), DATEV-Buchungsstapel |
-| Sicherung | automatisch täglich beim Beenden + manuell, ZIP in einen wählbaren Ordner, Rotation, Rücksicherung |
+| Sicherung | automatisch beim Beenden (täglich und nach jeder Änderung) + manuell, ZIP in einen wählbaren Ordner, optional verschlüsselt, Prüfung nach dem Schreiben, Rotation, Rücksicherung |
 
 ## Speicherorte
 - Datenbank + Archiv: `%LOCALAPPDATA%\KleinFaktura\` (bewusst **nicht** in einem Cloud-Sync-Ordner – SQLite
@@ -74,10 +74,10 @@ in E-Mail-Vorlagen zusätzlich `{belegart} {betreff}`, in Mahnungen zusätzlich 
 - Kleinunternehmer müssen keine E-Rechnungen ausstellen (aber empfangen können). ZUGFeRD ist pro Rechnung zuschaltbar.
 
 ## Entwicklung
-- Python 3.12: `python -m pip install -r requirements.txt`, Start mit `python main.py` oder `Start-Entwicklung.bat`
+- Python 3.12: `python -m pip install -r requirements-dev.txt`, Start mit `python main.py` oder `Start-Entwicklung.bat`
 - Aus dem Quellcode gestartet nutzt das Programm **getrennte Testdaten** unter
   `%LOCALAPPDATA%\KleinFaktura-Entwicklung\` (Titelleiste zeigt „ENTWICKLUNG“).
-- Tests: `python -m pytest tests` (nur Dummy-Daten)
+- Tests: `python -m pytest tests` (nur Dummy-Daten), Prüfung des Codes: `python -m ruff check .`
 - Exe lokal bauen: `build_exe.bat`
 - Releases: siehe [RELEASING.md](RELEASING.md). Fehler und Wünsche als GitHub-Issue (Vorlagen „Fehler“ / „Wunsch“).
 

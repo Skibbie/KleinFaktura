@@ -1,6 +1,9 @@
 # Installiert oder aktualisiert KleinFaktura aus dem neuesten (oder angegebenen) GitHub-Release.
 # Aufruf:  powershell -ExecutionPolicy Bypass -File tools\install_release.ps1 [-Version 2.0.0]
 # Keine Anmeldung noetig (oeffentliches Repository).
+# ACHTUNG: Dieses Skript prueft nur die von GitHub gemeldete Pruefsumme, NICHT die Release-Signatur
+# (Windows PowerShell 5.1 kann Ed25519 nicht pruefen). Fuer die normale Installation das Setup verwenden;
+# Updates aus dem Programm heraus pruefen die Signatur immer.
 # Umstieg von EEE-Faktura: dessen Datenordner wird automatisch weiterbenutzt; die alten Verknuepfungen (Desktop,
 # Startmenue) werden entfernt, damit nicht zwei Programme mit derselben Datenbank arbeiten. Den alten
 # Programmordner erst nach dem ersten Start von KleinFaktura loeschen (das Logo wird von dort uebernommen).

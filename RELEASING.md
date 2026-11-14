@@ -16,14 +16,31 @@ Screenshots mit personenbezogenen Daten anhängen. Geplante Punkte werden einem 
 ## Neue Version veröffentlichen
 1. `CHANGELOG.md`: Einträge aus „Unveröffentlicht“ in einen neuen Abschnitt `## [X.Y.Z] – Datum` verschieben.
 2. `app/config.py`: `APP_VERSION = "X.Y.Z"`.
-3. Bei Änderungen an `schema.sql`: `SCHEMA_VERSION` in `app/db/database.py` erhöhen, Umbau so schreiben,
-   dass bestehende Daten erhalten bleiben (nur `CREATE … IF NOT EXISTS`, `ALTER TABLE … ADD COLUMN`).
+3. Bei Änderungen an `schema.sql`: `SCHEMA_VERSION` in `app/db/database.py` erhöhen und für die neue Version
+   einen Umbauschritt in `MIGRATIONS` eintragen (neue Spalten mit `add_column`, zusätzlich in `schema.sql`). Ein
+   Test bricht ab, wenn der Schritt fehlt. Alle Schritte laufen in einer Transaktion: scheitert einer, bleibt die
+   Datenbank auf dem alten Stand.
 4. Commit auf `main`, dann `git tag -a vX.Y.Z -m "KleinFaktura X.Y.Z"` und `git push --follow-tags`
    (`--follow-tags` überträgt nur Tags mit `-a`; ein einfacher Tag braucht `git push origin vX.Y.Z`).
 5. GitHub Actions testet, baut `KleinFaktura-Setup-X.Y.Z.exe` (Inno Setup, `installer/KleinFaktura.iss`) und
    `KleinFaktura-X.Y.Z.zip`, signiert beide (`SHA256SUMS.txt` + `SHA256SUMS.txt.sig`) und legt das Release mit
    dem Changelog-Abschnitt an. Der Workflow bricht ab, wenn Tag und `APP_VERSION` nicht übereinstimmen oder das
    Secret `UPDATE_SIGNING_KEY` fehlt.
+
+## Abhängigkeiten
+- `requirements.txt`: Laufzeit-Abhängigkeiten (Bereiche); `requirements-dev.txt`: zusätzlich Tests und Prüfwerkzeuge.
+- Der Release-Build installiert ausschließlich `requirements-build.txt`, der Signierschritt nur
+  `requirements-sign.txt` – beide mit exakten Versionen und Prüfsummen (`pip install --require-hashes`). Erzeugt
+  werden sie mit `python tools/lock_requirements.py` (unter Windows, Python 3.12) aus den `.in`-Dateien.
+- Vor jedem Release die Lockdateien aktualisieren, lokal testen und mit committen. Ein Paket mit veränderter
+  Prüfsumme lässt den Build abbrechen statt in die Exe zu gelangen.
+- Der Release-Workflow hat zwei Jobs: `build` (Tests, Exe, Setup, ZIP – ohne Schreibrechte und ohne Schlüssel) und
+  `sign-release` (signiert die fertigen Dateien und legt das Release an). Probelauf ohne Veröffentlichung:
+  Actions → Release → „Run workflow“.
+- GitHub-Actions sind auf Commits festgelegt (Version im Kommentar). Beim Aktualisieren den Commit des neuen Tags
+  eintragen (`gh api repos/actions/checkout/commits/vX.Y.Z --jq .sha`).
+- Die automatische Prüfung (`ci.yml`) erzeugt Beispiel-E-Rechnungen (`tools/make_einvoice_samples.py`) und prüft
+  sie mit Mustang gegen die Regeln der EN 16931 und PDF/A-3. Version und Prüfsumme von Mustang stehen im Workflow.
 
 ## Update-Signatur
 Installierte Programme ab Version 2.2.0 übernehmen ein Update nur, wenn `SHA256SUMS.txt` mit dem privaten
@@ -52,7 +69,7 @@ beendet (mit Sicherung), ein Hilfsskript tauscht den Programmordner und startet 
 bleibt als `KleinFaktura.vorher` liegen; Protokoll in `update.log` im Datenordner.
 
 Von Hand:
-1. Programm schließen (dabei läuft die tägliche Sicherung).
+1. Programm schließen (dabei läuft die Sicherung).
 2. ZIP aus dem Release herunterladen, Inhalt nach `%LOCALAPPDATA%\Programs\KleinFaktura\` entpacken
    (vorhandenen Ordner ersetzen). Oder: `tools\install_release.ps1` ausführen.
 3. Starten. Ändert die neue Version die Datenbank, liegt vorher eine Kopie unter

@@ -1,14 +1,13 @@
 """Update-Hinweis beim Start, „Nach Updates suchen“ und Installation (siehe app.services.update)."""
 from __future__ import annotations
 
-import threading
-
-from PySide6.QtCore import QEventLoop, QObject, Qt, QTimer, Signal
-from PySide6.QtWidgets import QApplication, QMessageBox, QProgressDialog
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from app import config
 from app.db.database import get_setting
 from app.services import update
+from app.ui.common import in_background, run_with_progress
 
 CHECK_SETTING = "update.check_on_start"
 
@@ -17,21 +16,7 @@ def release_page() -> str:
     return f"github.com/{update.REPO}/releases"
 
 
-class _Result(QObject):
-    done = Signal(object, object)  # Ergebnis, Fehler – wird im GUI-Thread zugestellt
-
-
-def _in_background(fn, on_done) -> _Result:
-    res = _Result()
-    res.done.connect(on_done, Qt.QueuedConnection)  # Rückmeldung immer im GUI-Thread (Dialoge)
-
-    def run():
-        try:
-            res.done.emit(fn(), None)
-        except Exception as e:  # noqa: BLE001
-            res.done.emit(None, e)
-    threading.Thread(target=run, daemon=True).start()
-    return res  # Referenz halten, bis das Signal angekommen ist
+_in_background = in_background
 
 
 def check_on_start(win) -> None:
@@ -52,14 +37,11 @@ def check_now(win) -> None:
         QMessageBox.information(win, "Update", "Updates lassen sich nur in der installierten Version einspielen.\n"
                                                f"Laufende Version: {config.APP_VERSION} (aus dem Quellcode)")
         return
-    QApplication.setOverrideCursor(Qt.WaitCursor)
     try:
-        release = update.latest_release()
+        release = run_with_progress(win, "Update", "Suche nach Updates …", update.latest_release)
     except update.UpdateError as e:
-        QApplication.restoreOverrideCursor()
         QMessageBox.warning(win, "Update", f"Die Suche nach Updates ist fehlgeschlagen:\n{e}")
         return
-    QApplication.restoreOverrideCursor()
     if update.is_newer(release.version):
         offer(win, release)
     else:
@@ -86,27 +68,13 @@ def install(win, release: update.Release) -> None:
     target = update.install_dir()
     if target is None:
         return
-    dlg = QProgressDialog(f"{config.APP_NAME} {release.version} wird heruntergeladen …", "", 0, 0, win)
-    dlg.setWindowTitle("Update")
-    dlg.setCancelButton(None)
-    dlg.setWindowModality(Qt.WindowModal)
-    dlg.setMinimumDuration(0)
-    dlg.show()
-    loop = QEventLoop()
-    out: dict = {}
-
-    def done(new_dir, err):
-        out.update(new_dir=new_dir, err=err)
-        loop.quit()
     setup = update.installed_by_setup(target)
     fetch = (lambda: update.download_setup(release)) if setup else (lambda: update.download(release, target))
-    keep = _in_background(fetch, done)  # noqa: F841
-    loop.exec()
-    dlg.close()
-    if out["err"] is not None:
-        QMessageBox.warning(win, "Update", f"Das Update konnte nicht heruntergeladen werden:\n{out['err']}")
+    try:
+        new_dir = run_with_progress(win, "Update", f"{config.APP_NAME} {release.version} wird heruntergeladen …", fetch)
+    except Exception as e:  # noqa: BLE001 – jede Ursache (Netz, Signatur, Datenträger) als Meldung zeigen
+        QMessageBox.warning(win, "Update", f"Das Update konnte nicht heruntergeladen werden:\n{e}")
         return
-    new_dir = out["new_dir"]
     if win.close_for(lambda: update.launch_helper(new_dir, target, setup=setup)):
         QApplication.quit()  # ausdrücklich beenden, das Skript wartet auf das Prozessende
     else:

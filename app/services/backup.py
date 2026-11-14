@@ -13,9 +13,34 @@ from pathlib import Path
 
 from app import config
 from app.db.database import get_int_setting, get_setting, set_setting
-from app.services import audit, backup_crypto
+from app.services import audit, backup_crypto, secret
 
 PREFIX = "faktura-backup-"
+# Bereits gepackte Dateitypen (Belege sind fast immer PDF/Bild): unkomprimiert ablegen – spart Zeit, kostet kaum Platz
+STORED_SUFFIXES = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".zip", ".docx", ".xlsx", ".ods", ".odt"}
+# Einstellungen, die die Sicherung selbst schreibt – zählen nicht als Änderung des Datenstands
+_STATE_KEYS = ("backup.last", "backup.fingerprint")
+
+
+def password(con: sqlite3.Connection) -> str:
+    """Passwort der verschlüsselten Sicherung im Klartext (in der Datenbank liegt es geschützt, siehe secret)."""
+    return secret.unprotect(get_setting(con, "backup.password"))
+
+
+def state_fingerprint(con: sqlite3.Connection) -> str:
+    """Prüfsumme über den gesamten Datenstand (alle Tabellen; das Protokoll über seinen Kettenkopf). Ändert sie sich
+    gegenüber der letzten Sicherung, gibt es Ungesichertes."""
+    import hashlib
+    h = hashlib.sha256(audit.head(con).encode("utf-8"))
+    tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' "
+                                        "AND name <> 'audit_log' ORDER BY name")]
+    for table in tables:
+        h.update(f"|tabelle:{table}|".encode())
+        for row in con.execute(f'SELECT * FROM "{table}" ORDER BY rowid'):
+            if table == "settings" and row[0] in _STATE_KEYS:
+                continue
+            h.update(repr(tuple(row)).encode("utf-8"))
+    return h.hexdigest()
 
 
 def backup_dir(con: sqlite3.Connection) -> Path:
@@ -30,6 +55,29 @@ def backup_dir(con: sqlite3.Connection) -> Path:
     return p
 
 
+def _check_snapshot(snap: Path) -> None:
+    db = sqlite3.connect(str(snap))
+    try:
+        result = db.execute("PRAGMA integrity_check").fetchone()[0]
+    finally:
+        db.close()
+    if result != "ok":
+        raise ValueError("Die Datenbank meldet einen Fehler und wurde nicht gesichert (ältere Sicherungen bleiben "
+                         f"erhalten). Bitte die letzte Sicherung wiederherstellen.\n\nDetails: {result}")
+
+
+def _check_zip(path: Path) -> None:
+    """Die fertige Sicherung noch einmal lesen: eine unlesbare Sicherung (voller Datenträger, Abbruch der Cloud-
+    Synchronisierung) soll jetzt auffallen, nicht erst bei der Rücksicherung."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            bad = z.testzip()
+    except (OSError, zipfile.BadZipFile) as e:
+        raise ValueError(f"Die Sicherung konnte nach dem Schreiben nicht gelesen werden: {e}") from e
+    if bad:
+        raise ValueError(f"Die Sicherung ist nach dem Schreiben fehlerhaft ({bad}).")
+
+
 def create_backup(con: sqlite3.Connection, target_dir: Path | None = None) -> Path:
     target_dir = Path(target_dir) if target_dir else backup_dir(con)
     if config.inside_archive(target_dir):
@@ -39,33 +87,58 @@ def create_backup(con: sqlite3.Connection, target_dir: Path | None = None) -> Pa
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     encrypt = get_setting(con, "backup.encrypt") == "1"
     zpath = target_dir / f"{PREFIX}{stamp}{'.enc' if encrypt else '.zip'}"
+    fingerprint = state_fingerprint(con)
     with tempfile.TemporaryDirectory() as tmp:
         snap = Path(tmp) / "faktura.sqlite3"
         dst = sqlite3.connect(str(snap))
-        con.backup(dst)
-        dst.close()
+        try:
+            con.backup(dst)
+        finally:
+            dst.close()
+        _check_snapshot(snap)
         # unverschlüsselt entsteht das ZIP nur im lokalen Temp-Ordner, nie im (evtl. Cloud-)Sicherungsordner
         tmpzip = Path(tmp) / "sicherung.zip" if encrypt else zpath.with_suffix(".zip.part")
-        with zipfile.ZipFile(tmpzip, "w", zipfile.ZIP_DEFLATED) as z:
-            z.write(snap, "faktura.sqlite3")
-            arch = config.archive_dir()
-            for f in arch.rglob("*"):
-                if f.is_file():
-                    z.write(f, f"archiv/{f.relative_to(arch).as_posix()}")
-            logo = config.resolve_stored_path(get_setting(con, "company.logo")) or Path()
-            if logo.name and logo.is_file():
-                z.write(logo, f"logo/{logo.name}")
-            z.writestr("INFO.txt", f"{config.APP_NAME} {config.APP_VERSION}\nBackup vom {datetime.now():%d.%m.%Y %H:%M:%S}\n"
-                                   f"{audit.head(con)}\n")
-        if encrypt:
-            part = zpath.with_suffix(".enc.part")
-            backup_crypto.encrypt_file(tmpzip, part, get_setting(con, "backup.password"))
-            os.replace(part, zpath)
-        else:
-            os.replace(tmpzip, zpath)
+        try:
+            with zipfile.ZipFile(tmpzip, "w", zipfile.ZIP_DEFLATED) as z:
+                z.write(snap, "faktura.sqlite3")
+                arch = config.archive_dir()
+                for f in arch.rglob("*"):
+                    if f.is_file():
+                        z.write(f, f"archiv/{f.relative_to(arch).as_posix()}",
+                                zipfile.ZIP_STORED if f.suffix.lower() in STORED_SUFFIXES else zipfile.ZIP_DEFLATED)
+                logo = config.resolve_stored_path(get_setting(con, "company.logo")) or Path()
+                if logo.name and logo.is_file():
+                    z.write(logo, f"logo/{logo.name}")
+                z.writestr("INFO.txt", f"{config.APP_NAME} {config.APP_VERSION}\n"
+                                       f"Backup vom {datetime.now():%d.%m.%Y %H:%M:%S}\n{audit.head(con)}\n")
+            _check_zip(tmpzip)
+            if encrypt:
+                part = zpath.with_suffix(".enc.part")
+                try:
+                    backup_crypto.encrypt_file(tmpzip, part, password(con))
+                    os.replace(part, zpath)
+                finally:
+                    part.unlink(missing_ok=True)
+            else:
+                os.replace(tmpzip, zpath)
+        finally:
+            if not encrypt:
+                tmpzip.unlink(missing_ok=True)
     set_setting(con, "backup.last", datetime.now().isoformat(timespec="seconds"))
+    set_setting(con, "backup.fingerprint", fingerprint)
     rotate(con, target_dir)
     return zpath
+
+
+def create_backup_own_connection() -> Path:
+    """Sicherung mit eigener Datenbankverbindung – für den Aufruf aus einem Hintergrund-Thread (eine SQLite-
+    Verbindung gehört dem Thread, der sie geöffnet hat)."""
+    from app.db import database
+    con = database.connect()
+    try:
+        return create_backup(con)
+    finally:
+        con.close()
 
 
 def fallback_notice(con: sqlite3.Connection, zpath: Path) -> str:
@@ -111,9 +184,13 @@ def rotate(con: sqlite3.Connection, target_dir: Path) -> None:
                 pass
 
 
-def needs_daily_backup(con: sqlite3.Connection) -> bool:
+def needs_backup(con: sqlite3.Connection) -> bool:
+    """Beim Beenden sichern: einmal täglich und immer dann, wenn sich seit der letzten Sicherung etwas geändert hat
+    (sonst fehlten z.B. die am Nachmittag festgeschriebenen Rechnungen bis zum nächsten Tag in jeder Sicherung)."""
     last = get_setting(con, "backup.last")
-    return not last or last[:10] < datetime.now().date().isoformat()
+    if not last or last[:10] < datetime.now().date().isoformat():
+        return True
+    return get_setting(con, "backup.fingerprint") != state_fingerprint(con)
 
 
 def decrypt_for_restore(path: Path, password: str) -> Path:
@@ -188,7 +265,10 @@ def _restore_members(z: zipfile.ZipFile) -> list[tuple[zipfile.ZipInfo, str]]:
 # eine präparierte Sicherung könnte sonst z.B. alle künftigen Sicherungen oder PDF-Kopien auf ein fremdes
 # Netzlaufwerk umleiten; bei einem Umzug auf einen neuen PC passen die alten Pfade ohnehin nicht.
 LOCAL_SETTINGS = ("backup.dir", "pdf.export_dir", "pdf.export_auto", "pdf.export_year_dirs", "mail.thunderbird_path",
-                  "hottgenroth.server", "hottgenroth.driver")
+                  "hottgenroth.server", "hottgenroth.driver",
+                  # Verschlüsselung und Passwort gelten für diesen PC: das Passwort ist an das Windows-Konto gebunden
+                  # (secret), und eine präparierte Sicherung darf die Verschlüsselung nicht abschalten
+                  "backup.encrypt", "backup.password", "backup.fingerprint")
 
 
 def _keep_local_settings(current_db: Path, restored_db: Path) -> None:

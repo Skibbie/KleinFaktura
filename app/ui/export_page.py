@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QGroupBox, 
 from app import config
 from app.db.database import get_setting
 from app.services import audit, backup, backup_crypto, documents, export
-from app.ui.common import Ctx, button, confirm, error, hbox, open_file, page_title
+from app.ui.common import Ctx, button, confirm, error, hbox, open_file, page_title, run_with_progress
 
 
 class ExportPage(QWidget):
@@ -116,23 +116,27 @@ class ExportPage(QWidget):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         ok, msg = audit.verify(self.ctx.con)
         problems = documents.verify_archive(self.ctx.con)
+        mismatches = documents.verify_against_log(self.ctx.con)
+        db_state = self.ctx.con.execute("PRAGMA integrity_check").fetchone()[0]
         QApplication.restoreOverrideCursor()
         text = ("✓ " if ok else "✗ ") + msg + "\n"
         text += "✓ Alle Archivdateien vorhanden und unverändert." if not problems else "✗ Archiv:\n" + "\n".join(problems)
-        (QMessageBox.information if ok and not problems else QMessageBox.warning)(self, "Integritätsprüfung", text)
+        text += ("\n✓ Belege stimmen mit dem Protokoll überein." if not mismatches
+                 else "\n✗ Belege und Protokoll:\n" + "\n".join(mismatches))
+        text += "\n✓ Datenbankdatei ist fehlerfrei." if db_state == "ok" else f"\n✗ Datenbankdatei: {db_state}"
+        clean = ok and not problems and not mismatches and db_state == "ok"
+        (QMessageBox.information if clean else QMessageBox.warning)(self, "Integritätsprüfung", text)
 
     def procdoc(self):
         open_file(config.BASE_DIR / "docs" / "Verfahrensdokumentation.md")
 
     def do_backup(self):
-        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            p = backup.create_backup(self.ctx.con)
+            p = run_with_progress(self, "Datensicherung", "Die Daten werden gesichert …",
+                                  backup.create_backup_own_connection)
         except Exception as e:  # noqa: BLE001
-            QApplication.restoreOverrideCursor()
             error(self, "Sicherung fehlgeschlagen", e)
             return
-        QApplication.restoreOverrideCursor()
         self.reload()
         QMessageBox.information(self, "Sicherung", backup.fallback_notice(self.ctx.con, p) or f"Sicherung erstellt:\n{p}")
 
@@ -166,7 +170,7 @@ class ExportPage(QWidget):
 
     def _decrypt(self, path: Path) -> Path | None:
         """Verschlüsselte Sicherung: erst das eingestellte Passwort versuchen, sonst danach fragen."""
-        password = get_setting(self.ctx.con, "backup.password")
+        password = backup.password(self.ctx.con)
         while True:
             try:
                 QApplication.setOverrideCursor(Qt.WaitCursor)

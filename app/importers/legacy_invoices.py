@@ -236,11 +236,10 @@ def parse_rows(rows: list[list[str]], path: Path, company: dict) -> ParsedInvoic
         inv.warnings.append("Kein Datum erkannt.")
     if inv.salutation and RX_DATE.search(inv.salutation):
         inv.salutation = RX_DATE.sub("", inv.salutation).strip()
-    if "leistungsdatum" in low and ("entspricht" in low or "gleich" in low):
-        inv.service_date = inv.doc_date
-    else:
-        mm = re.search(r"leistungs(?:datum|zeitraum)\s*:?\s*(\d{1,2}\.\d{1,2}\.\d{2,4})", alltext, re.IGNORECASE)
-        inv.service_date = parse_date(mm.group(1)) if mm else inv.doc_date
+    # Ein ausdrücklich genanntes Leistungsdatum gilt; sonst („entspricht dem Rechnungsdatum“ oder keine Angabe) das
+    # Belegdatum. Nicht nach „gleich“ suchen: das steckt auch in „Hydraulischer Abgleich“.
+    mm = re.search(r"leistungs(?:datum|zeitraum)\s*:?\s*(\d{1,2}\.\d{1,2}\.\d{2,4})", alltext, re.IGNORECASE)
+    inv.service_date = (parse_date(mm.group(1)) if mm else None) or inv.doc_date
 
     # Empfänger: Block direkt vor der Anrede (bzw. vor der ersten PLZ-Zeile)
     zip_idx = None
@@ -449,6 +448,9 @@ def import_parsed(con: sqlite3.Connection, inv: ParsedInvoice, *, number: str, d
         raise ValueError("Diese Datei wurde bereits importiert.")
     if con.execute("SELECT 1 FROM document WHERE number=?", (number,)).fetchone():
         raise ValueError(f"Die Nummer {number} ist bereits vergeben.")
+    if paid and doc_type == "rechnung":
+        from app.services import payments
+        payments.check_year_open(con, pay_date or doc_date)
     year = (doc_date or "0000")[:4]
     target_dir = config.archive_dir() / "import" / year
     target_dir.mkdir(parents=True, exist_ok=True)

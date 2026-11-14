@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QListWidget, Q
 from app import config
 from app.db import database
 from app.services import backup
-from app.ui.common import Ctx
+from app.ui.common import Ctx, run_with_progress
 from app.ui.customers import CustomersPage
 from app.ui.dashboard import Dashboard
 from app.ui.documents_page import DocumentsPage
@@ -255,15 +255,14 @@ class MainWindow(QMainWindow):
             return
         if not getattr(self, "_skip_backup", False):
             try:
-                if backup.needs_daily_backup(self.ctx.con):
-                    QApplication.setOverrideCursor(Qt.WaitCursor)
-                    zpath = backup.create_backup(self.ctx.con)
-                    QApplication.restoreOverrideCursor()
+                if backup.needs_backup(self.ctx.con):
+                    # im Hintergrund mit eigener Verbindung: ein großes Archiv lässt das Fenster nicht einfrieren
+                    zpath = run_with_progress(self, "Datensicherung", "Die Daten werden gesichert …",
+                                              backup.create_backup_own_connection)
                     notice = backup.fallback_notice(self.ctx.con, zpath)
                     if notice:
                         QMessageBox.information(self, "Datensicherung", notice)
             except Exception as e:  # noqa: BLE001
-                QApplication.restoreOverrideCursor()
                 r = QMessageBox.warning(self, "Datensicherung", f"Automatische Sicherung fehlgeschlagen:\n{e}\n\nTrotzdem beenden?",
                                         QMessageBox.Yes | QMessageBox.No)
                 if r == QMessageBox.No:
