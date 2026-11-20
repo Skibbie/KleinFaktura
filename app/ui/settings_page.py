@@ -29,6 +29,7 @@ NUMERIC_FIELDS = {
     "ku.limit_prev": ("KU-Grenze Vorjahr €", "eur", 1),
     "ku.limit_curr": ("KU-Grenze laufendes Jahr €", "eur", 1),
     "ku.warn_percent": ("Warnung ab % der Grenze", "int", 1),
+    "ku.founding_year": ("Gründungsjahr", "year", 1900),
     "invoice.payment_days": ("Zahlungsziel (Tage)", "int", 0),
     "offer.valid_days": ("Angebote gültig (Tage)", "int", 0),
     "dunning.days": ("Neue Zahlungsfrist (Tage)", "int", 0),
@@ -100,9 +101,13 @@ class SettingsPage(QWidget):
         self.tax_mode.currentIndexChanged.connect(lambda *_: self.regel_hint.setVisible(self.tax_mode.currentData() == "regel"))
         self.regel_hint.setVisible(self.tax_mode.currentData() == "regel")
         for key, label in [("tax.default_rate", "Standard-USt-Satz %"), ("ku.limit_prev", "KU-Grenze Vorjahr €"),
-                           ("ku.limit_curr", "KU-Grenze laufendes Jahr €"), ("ku.warn_percent", "Warnung ab % der Grenze")]:
+                           ("ku.limit_curr", "KU-Grenze laufendes Jahr €"), ("ku.warn_percent", "Warnung ab % der Grenze"),
+                           ("ku.founding_year", "Gründungsjahr")]:
             self.edits[key] = QLineEdit(get_setting(ctx.con, key))
             f.addRow(label, self.edits[key])
+        self.edits["ku.founding_year"].setPlaceholderText("leer lassen, wenn vor dem laufenden Jahr gegründet")
+        self.edits["ku.founding_year"].setToolTip("Im Jahr der Gründung gilt die 25.000-€-Grenze schon für das "
+                                                  "laufende Jahr, nicht erst ab dem Folgejahr.")
         self.ku_basis = QComboBox()
         self.ku_basis.addItem("Ist – vereinnahmte Entgelte (Zahlungseingänge)", "ist")
         self.ku_basis.addItem("Soll – berechnete Entgelte (Rechnungen)", "soll")
@@ -366,15 +371,18 @@ class SettingsPage(QWidget):
             if key not in self.edits:
                 continue
             text = self.edits[key].text().strip()
+            if kind == "year" and not text:
+                out[key] = ""            # freiwillige Angabe
+                continue
             try:
                 d = input_decimal(text) if text else None
             except ValueError:
                 d = None
-            if d is None or d < minimum or (kind == "int" and d != d.to_integral_value()):
-                need = "ganze Zahl" if kind == "int" else "Zahl"
+            if d is None or d < minimum or (kind in ("int", "year") and d != d.to_integral_value()):
+                need = "ganze Zahl" if kind in ("int", "year") else "Zahl"
                 problems.append(f"{label}: „{text}“ ist keine gültige {need} (mindestens {minimum}).")
                 continue
-            if kind == "int":
+            if kind in ("int", "year"):
                 out[key] = str(int(d))
             elif kind == "eur":
                 out[key] = f"{d:.2f}".replace(".", ",")

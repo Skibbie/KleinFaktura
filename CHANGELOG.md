@@ -5,6 +5,25 @@ automatisch als Beschreibung übernommen. Neue Einträge zuerst unter `## [Unver
 
 ## [Unveröffentlicht]
 
+## [2.2.4] – 2026-11-20
+
+- Bank-Import: Beträge mit nachgestelltem Minus (z.B. „39,95-“, bei manchen Banken üblich) wurden als Gutschrift
+  gelesen und die Abbuchung stillschweigend übersprungen
+- Jahresabschluss: Neue Rechnungen und Stornos mit einem Datum im abgeschlossenen Jahr lassen sich nicht mehr
+  festschreiben – bisher änderten sie nachträglich Umsatzliste und Umsatz des Jahres. Der Import von Altbelegen
+  (unbezahlt) bleibt möglich
+- Kleinunternehmer: neue Einstellung „Gründungsjahr“ (Einstellungen → Steuer). Im Jahr der Gründung gilt die
+  25.000-€-Grenze schon für das laufende Jahr; Übersicht und Prüfung vor dem Festschreiben warnen entsprechend
+- E-Rechnung bei Regelbesteuerung: Hinweis vor dem Festschreiben, dass Positionen mit 0 % als Nullsatz ausgewiesen
+  werden (richtig z.B. für Photovoltaik, nicht für steuerfreie Leistungen nach § 4 UStG)
+- Rücksicherung: Bleibt nach einem Absturz die entschlüsselte Kopie einer verschlüsselten Sicherung oder ein halb
+  entpackter Zwischenordner liegen, wird beides beim nächsten Start entfernt
+- Integritätsprüfung: Bei einem Fehler blieb der Mauszeiger dauerhaft auf „Warten“
+- Programm-Update: Pfade mit Laufwerksangabe im Update-Paket werden abgelehnt (zusätzlich zur Signaturprüfung)
+- Fehlermeldungen: Bricht SQLite einen Vorgang selbst ab (z.B. Datenträger voll), erscheint die eigentliche
+  Ursache statt „no transaction is active“
+- CSV-Import: Ein nicht erkanntes Trennzeichen veränderte die CSV-Standardeinstellung für das ganze Programm
+
 ## [2.2.3] – 2026-11-14
 
 - Datensicherung: Beim Beenden wird jetzt immer gesichert, wenn sich seit der letzten Sicherung etwas geändert

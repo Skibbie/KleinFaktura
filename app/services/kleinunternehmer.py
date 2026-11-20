@@ -3,6 +3,7 @@
 - Vorjahresumsatz max. 25.000 € (netto) und
 - Umsatz im laufenden Jahr max. 100.000 € – wird diese Grenze im laufenden Jahr überschritten,
   entfällt die Steuerbefreiung SOFORT ab dem Umsatz, mit dem die Grenze überschritten wird.
+- Im Jahr der Gründung gilt stattdessen die 25.000-€-Grenze für das laufende Jahr (ebenfalls sofort).
 Maßgeblich ist der Gesamtumsatz nach vereinnahmten Entgelten (Ist), umschaltbar auf berechnete (Soll).
 Hinweis: keine Steuerberatung – im Zweifel Steuerberater fragen.
 """
@@ -35,6 +36,16 @@ class KUStatus:
     limit_prev_cents: int
     limit_curr_cents: int
     warn_percent: int
+    founding_year: int | None = None
+
+    @property
+    def founded_this_year(self) -> bool:
+        return self.founding_year == self.year
+
+    @property
+    def current_limit_cents(self) -> int:
+        """Grenze, ab der im laufenden Jahr sofort Umsatzsteuer anfällt (im Gründungsjahr die Vorjahresgrenze)."""
+        return self.limit_prev_cents if self.founded_this_year else self.limit_curr_cents
 
     @property
     def prev_ratio(self) -> float:
@@ -42,7 +53,8 @@ class KUStatus:
 
     @property
     def curr_ratio(self) -> float:
-        return self.curr_year_cents / self.limit_curr_cents if self.limit_curr_cents else 0
+        limit = self.current_limit_cents
+        return self.curr_year_cents / limit if limit else 0
 
     @property
     def eligible_this_year(self) -> bool:
@@ -53,14 +65,18 @@ class KUStatus:
         if not self.eligible_this_year:
             w.append(f"Vorjahresumsatz {self.year - 1} über {self.limit_prev_cents // 100:,} € – "
                      f"Kleinunternehmerregelung ist {self.year} nicht anwendbar!".replace(",", "."))
-        if self.curr_ratio >= 1:
-            w.append(f"Umsatzgrenze {self.limit_curr_cents // 100:,} € im laufenden Jahr überschritten – "
+        limit = self.current_limit_cents
+        where = "im Gründungsjahr" if self.founded_this_year else "im laufenden Jahr"
+        if self.curr_year_cents > limit:
+            w.append(f"Umsatzgrenze {limit // 100:,} € {where} überschritten – "
                      "ab sofort Regelbesteuerung!".replace(",", "."))
         elif self.curr_ratio * 100 >= self.warn_percent:
             w.append(f"Umsatz {self.year} hat {self.curr_ratio:.0%} der Grenze von "
-                     f"{self.limit_curr_cents // 100:,} € erreicht.".replace(",", "."))
+                     f"{limit // 100:,} € {where} erreicht.".replace(",", "."))
         # Prognose für das Folgejahr: Umsatz dieses Jahres ist der Vorjahresumsatz von nächstem Jahr
-        if self.curr_year_cents > self.limit_prev_cents:
+        if self.founded_this_year:
+            pass  # Gründungsjahr: die 25.000-€-Grenze gilt schon jetzt (siehe oben)
+        elif self.curr_year_cents > self.limit_prev_cents:
             w.append(f"Umsatz {self.year} liegt über {self.limit_prev_cents // 100:,} € – "
                      f"ab {self.year + 1} ist die Kleinunternehmerregelung nicht mehr möglich.".replace(",", "."))
         elif self.limit_prev_cents and self.curr_year_cents * 100 >= self.limit_prev_cents * self.warn_percent:
@@ -94,7 +110,14 @@ def status(con: sqlite3.Connection, year: int | None = None) -> KUStatus:
         limit_prev_cents=get_cents_setting(con, "ku.limit_prev", "25000"),
         limit_curr_cents=get_cents_setting(con, "ku.limit_curr", "100000"),
         warn_percent=get_int_setting(con, "ku.warn_percent", "80"),
+        founding_year=founding_year(con),
     )
+
+
+def founding_year(con: sqlite3.Connection) -> int | None:
+    """Gründungsjahr aus den Einstellungen (leer = Gründung liegt vor dem Einsatz des Programms)."""
+    value = get_setting(con, "ku.founding_year", "").strip()
+    return int(value) if value.isdigit() else None
 
 
 def check_before_finalize(con: sqlite3.Connection, doc: dict) -> list[str]:
@@ -112,8 +135,9 @@ def check_before_finalize(con: sqlite3.Connection, doc: dict) -> list[str]:
     # da offene Rechnungen im Laufe des Jahres vereinnahmt werden.
     soll = revenue_cents(con, year, "soll")
     projected = max(soll, st.curr_year_cents) + int(doc.get("total_net_cents") or 0)
-    if projected > st.limit_curr_cents:
+    if projected > st.current_limit_cents:
+        where = " (Gründungsjahr)" if st.founded_this_year else ""
         msgs.append(f"Mit dieser Rechnung würde der Umsatz {year} ({fmt_eur(projected)}) die Grenze von "
-                    f"{fmt_eur(st.limit_curr_cents)} überschreiten. Die Steuerbefreiung entfällt ab diesem "
+                    f"{fmt_eur(st.current_limit_cents)}{where} überschreiten. Die Steuerbefreiung entfällt ab diesem "
                     "Umsatz – Rechnung mit Umsatzsteuer ausstellen (Einstellungen → Steuer).")
     return msgs

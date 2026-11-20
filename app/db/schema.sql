@@ -277,6 +277,13 @@ BEGIN SELECT RAISE(ABORT, 'Das Jahr ist abgeschlossen – Ausgaben sind unverän
 CREATE TRIGGER IF NOT EXISTS trg_payment_lock_insert BEFORE INSERT ON payment
 WHEN EXISTS (SELECT 1 FROM expense_lock WHERE year = substr(NEW.pay_date, 1, 4))
 BEGIN SELECT RAISE(ABORT, 'Das Jahr ist abgeschlossen – Zahlungen können nicht mehr mit einem Datum in diesem Jahr erfasst werden'); END;
+-- Neue Rechnungen und Stornos mit Datum im abgeschlossenen Jahr können nicht mehr festgeschrieben werden. Der Import
+-- von Altbelegen bleibt möglich: er erfasst eine damals bereits gestellte Rechnung (unbezahlt, siehe Zahlungssperre).
+CREATE TRIGGER IF NOT EXISTS trg_document_lock_finalize BEFORE UPDATE ON document
+WHEN OLD.status = 'entwurf' AND NEW.status = 'festgeschrieben' AND NEW.doc_type IN ('rechnung', 'storno')
+     AND COALESCE(NEW.source, '') <> 'import'
+     AND EXISTS (SELECT 1 FROM expense_lock WHERE year = substr(NEW.doc_date, 1, 4))
+BEGIN SELECT RAISE(ABORT, 'Das Jahr ist abgeschlossen – Rechnungen mit einem Datum in diesem Jahr können nicht mehr festgeschrieben werden'); END;
 CREATE TRIGGER IF NOT EXISTS trg_expense_lock_no_delete BEFORE DELETE ON expense_lock
 BEGIN SELECT RAISE(ABORT, 'Ein Jahresabschluss kann nicht zurückgenommen werden'); END;
 

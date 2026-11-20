@@ -114,10 +114,15 @@ class ExportPage(QWidget):
 
     def verify(self):
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        ok, msg = audit.verify(self.ctx.con)
-        problems = documents.verify_archive(self.ctx.con)
-        mismatches = documents.verify_against_log(self.ctx.con)
-        db_state = self.ctx.con.execute("PRAGMA integrity_check").fetchone()[0]
+        try:
+            ok, msg = audit.verify(self.ctx.con)
+            problems = documents.verify_archive(self.ctx.con)
+            mismatches = documents.verify_against_log(self.ctx.con)
+            db_state = self.ctx.con.execute("PRAGMA integrity_check").fetchone()[0]
+        except Exception as e:  # noqa: BLE001
+            QApplication.restoreOverrideCursor()
+            error(self, "Integritätsprüfung", e)
+            return
         QApplication.restoreOverrideCursor()
         text = ("✓ " if ok else "✗ ") + msg + "\n"
         text += "✓ Alle Archivdateien vorhanden und unverändert." if not problems else "✗ Archiv:\n" + "\n".join(problems)

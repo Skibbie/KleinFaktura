@@ -19,7 +19,8 @@ def to_decimal(value) -> Decimal:
     s = str(value).strip().replace("€", "").replace("EUR", "").replace(" ", "").replace(" ", "")
     if not s:
         return Decimal("0")
-    neg = s.startswith("-") or (s.startswith("(") and s.endswith(")"))
+    # Minus vorn, hinten (manche Bank-Exporte: „12,50-“) oder Klammern
+    neg = s.startswith("-") or s.endswith("-") or (s.startswith("(") and s.endswith(")"))
     s = s.strip("-()")
     if "," in s and "." in s:
         if s.rfind(",") > s.rfind("."):

@@ -141,6 +141,7 @@ class Dashboard(QWidget):
         self.ku_prev.set_values(st.prev_year_cents, st.limit_prev_cents,
                                 "Grenze überschritten" if st.prev_ratio > 1 else "")
         self.ku_curr.set_values(st.curr_year_cents, st.limit_prev_cents,
+                                "Gründungsjahr: diese Grenze gilt schon jetzt" if st.founded_this_year else
                                 f"Sofortgrenze im laufenden Jahr: {fmt_eur(st.limit_curr_cents).replace(',00 €', ' €')}")
         warns = st.warnings()
         if get_setting(con, "tax.mode") != "kleinunternehmer":
