@@ -53,7 +53,9 @@ kompromittiertes GitHub-Konto) wird so abgelehnt.
 - **Privater Schlüssel**: Datei `Dokumente\KleinFaktura-Update-Signaturschluessel.txt`, als Secret
   `UPDATE_SIGNING_KEY` im Environment `release` hinterlegt (`gh secret set UPDATE_SIGNING_KEY --env release < Datei`),
   nicht als Repository-Secret: So kommt nur der freigegebene Signierschritt an den Schlüssel, kein anderer
-  Workflow. Das Environment erlaubt nur Tags `v*` und verlangt die Freigabe durch Skibbie. Zusätzlich offline sichern
+  Workflow. Das Environment erlaubt nur Tags `v*` und verlangt die Freigabe durch Skibbie. Ob ein Schlüssel der
+  private ist (er sieht aus wie der öffentliche), prüft `python tools/check_update_key.py`; mit `--setzen` hinterlegt
+  es ihn danach direkt im Environment. Zusätzlich offline sichern
   (USB-Stick im Schrank, Passwortmanager) und die Datei danach vom PC löschen. Nie ins Repository einchecken.
 - **Verlust**: Ohne den Schlüssel können installierte Programme nicht mehr automatisch aktualisiert werden. Dann
   mit `python tools/make_update_key.py` ein neues Paar erzeugen, Secret ersetzen und ein Release veröffentlichen,
