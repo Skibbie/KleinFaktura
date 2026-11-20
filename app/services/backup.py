@@ -205,6 +205,17 @@ def decrypt_for_restore(path: Path, password: str) -> Path:
     return out
 
 
+def cleanup_leftovers() -> None:
+    """Beim Start (nur eine Instanz läuft): Reste einer abgebrochenen Rücksicherung entfernen – vor allem die
+    entschlüsselte Klartext-Kopie einer verschlüsselten Sicherung und halb entpackte Zwischenordner."""
+    data = config.data_dir()
+    for f in data.glob("entschluesselt-*.zip"):
+        f.unlink(missing_ok=True)
+    for d in data.glob("ruecksicherung-neu-*"):
+        if d.is_dir():
+            shutil.rmtree(d, ignore_errors=True)
+
+
 def check_backup(zip_path: Path) -> None:
     """Prüft vor der Rücksicherung, ob die Datei eine Sicherung ist, die dieses Programm öffnen kann.
     Eine Sicherung einer neueren Version würde sonst eingespielt und dann beim Start abgelehnt."""

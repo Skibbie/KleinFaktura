@@ -73,6 +73,7 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "ku.limit_prev": "25000",
     "ku.limit_curr": "100000",
     "ku.warn_percent": "80",
+    "ku.founding_year": "",  # Jahr der Gründung (dort gilt die 25.000-€-Grenze schon im laufenden Jahr); leer = früher
     # Belege
     "invoice.payment_days": "14",
     "offer.valid_days": "30",
@@ -343,8 +344,9 @@ def transaction(con: sqlite3.Connection, immediate: bool = True):
             yield con
             con.execute("RELEASE sp")
         except BaseException:
-            con.execute("ROLLBACK TO sp")
-            con.execute("RELEASE sp")
+            if con.in_transaction:   # hat SQLite schon selbst zurückgerollt, den eigentlichen Fehler nicht verdecken
+                con.execute("ROLLBACK TO sp")
+                con.execute("RELEASE sp")
             raise
         return
     con.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
@@ -352,7 +354,8 @@ def transaction(con: sqlite3.Connection, immediate: bool = True):
         yield con
         con.execute("COMMIT")
     except BaseException:
-        con.execute("ROLLBACK")
+        if con.in_transaction:
+            con.execute("ROLLBACK")
         raise
 
 

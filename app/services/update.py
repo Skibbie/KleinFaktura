@@ -213,9 +213,11 @@ def extract(zip_path: Path, new_dir: Path) -> None:
             name = info.filename.replace("\\", "/")
             if not name.startswith(ZIP_PREFIX) or name.endswith("/"):
                 continue
-            rel = Path(name[len(ZIP_PREFIX):])
-            if rel.is_absolute() or ".." in rel.parts:
+            parts = name[len(ZIP_PREFIX):].split("/")
+            # absolut, „..“ oder Laufwerk („D:x.dll“ wäre unter Windows laufwerksrelativ) nie zulassen
+            if any(p in ("", ".", "..") or ":" in p for p in parts):
                 raise UpdateError(f"Ungültiger Pfad im ZIP: {name}")
+            rel = Path(*parts)
             dest = new_dir / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             with z.open(info) as src, open(dest, "wb") as out:

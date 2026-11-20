@@ -330,7 +330,15 @@ def validate(con: sqlite3.Connection, doc: dict, lines: list[dict]) -> list[str]
                                 "CH eintragen.")
     if doc.get("service_date_to") and doc.get("service_date") and doc["service_date_to"] < doc["service_date"]:
         problems.append("Leistungszeitraum: Ende liegt vor Beginn.")
+    year = (doc.get("doc_date") or "")[:4]
+    if doc["doc_type"] in ("rechnung", "storno") and year and _year_locked(con, year):
+        problems.append(f"Das Jahr {year} ist abgeschlossen – bitte ein Belegdatum im laufenden Jahr wählen.")
     return problems
+
+
+def _year_locked(con: sqlite3.Connection, year: str) -> bool:
+    from app.services import expenses
+    return expenses.is_locked(con, year)
 
 
 def plausibility_warnings(doc: dict, lines: list[dict], today: date | None = None,
@@ -349,6 +357,11 @@ def plausibility_warnings(doc: dict, lines: list[dict], today: date | None = Non
         for i, ln in enumerate(lines, 1):
             if not int(ln.get("unit_price_cents") or 0) or not to_decimal(ln.get("quantity") or 0):
                 warnings.append(f"Position {i} („{ln.get('title') or ln.get('description') or ''}“) ergibt 0,00 €.")
+        if doc.get("zugferd") and doc.get("tax_mode") == "regel" and any(
+                not to_decimal(ln.get("tax_rate") or 0) for ln in lines):
+            warnings.append("Positionen mit 0 % werden in der E-Rechnung als Nullsatz ausgewiesen (z.B. Photovoltaik "
+                            "nach § 12 Abs. 3 UStG). Steuerfreie Leistungen (z.B. nach § 4 UStG) bildet die E-Rechnung "
+                            "nicht richtig ab – dafür bitte eine Rechnung ohne E-Rechnung ausstellen.")
     if doc.get("doc_date"):
         d = date.fromisoformat(doc["doc_date"])
         if d > today + timedelta(days=7):

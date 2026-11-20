@@ -23,6 +23,11 @@ _GUESS = {
 }
 
 
+class _Semicolon(csv.excel):
+    """Rückfall, wenn das Trennzeichen nicht erkannt wird (eigene Klasse: csv.excel selbst bleibt unverändert)."""
+    delimiter = ";"
+
+
 def read_table(path: Path | str) -> tuple[list[str], list[list[str]]]:
     path = Path(path)
     if path.suffix.lower() in (".xlsx", ".xlsm"):
@@ -42,8 +47,7 @@ def read_table(path: Path | str) -> tuple[list[str], list[list[str]]]:
         try:
             dialect = csv.Sniffer().sniff(text[:4096], delimiters=";,\t")
         except csv.Error:
-            dialect = csv.excel
-            dialect.delimiter = ";"
+            dialect = _Semicolon
         rows = [[c.strip() for c in r] for r in csv.reader(io.StringIO(text), dialect)]
     rows = [r for r in rows if any(c for c in r)]
     if not rows:

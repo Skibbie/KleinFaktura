@@ -106,6 +106,7 @@ def main() -> int:
         app.processEvents()
 
     from app.db import database
+    from app.services import backup
     from app.ui import theme
     from app.ui.common import Ctx
     from app.ui.main_window import MainWindow
@@ -114,6 +115,7 @@ def main() -> int:
     if icon.exists():
         app.setWindowIcon(QIcon(str(icon)))
     sys.excepthook = _excepthook
+    backup.cleanup_leftovers()
     con = database.connect()
     try:
         database.init_db(con)
