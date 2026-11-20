@@ -5,6 +5,8 @@ automatisch als Beschreibung übernommen. Neue Einträge zuerst unter `## [Unver
 
 ## [Unveröffentlicht]
 
+## [2.3.0] – 2026-11-20
+
 - Artikel-Import aus Excel oder CSV (Textbausteine & Artikel → „Importieren…“): Spalten werden wie beim
   Kundenimport per Überschrift zugeordnet, Preise in deutscher Schreibweise („1.234,50“). Eine Vorschau zeigt neue
   Artikel, schon vorhandene (gleiche Bezeichnung) und fehlerhafte Zeilen; vorhandene Artikel werden wahlweise
