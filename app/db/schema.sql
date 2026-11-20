@@ -145,7 +145,8 @@ CREATE TABLE IF NOT EXISTS article (
     unit_price_cents INTEGER DEFAULT 0,
     tax_rate         TEXT DEFAULT '19',
     active           INTEGER DEFAULT 1,
-    sort             INTEGER DEFAULT 0
+    sort             INTEGER DEFAULT 0,
+    category         TEXT DEFAULT ''           -- Freitext, leer = ohne Kategorie (ab Schema 3)
 );
 
 CREATE TABLE IF NOT EXISTS number_range (

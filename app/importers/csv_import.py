@@ -28,13 +28,23 @@ class _Semicolon(csv.excel):
     delimiter = ";"
 
 
+def _cell_text(v) -> str:
+    """Zellinhalt als Text. Kommazahlen in deutscher Schreibweise („12,345“ statt „12.345“): sonst läse
+    input_decimal einen Preis von 12,345 € als 12.345 €."""
+    if v is None:
+        return ""
+    if isinstance(v, float):
+        return repr(v).replace(".", ",")
+    return str(v).strip()
+
+
 def read_table(path: Path | str) -> tuple[list[str], list[list[str]]]:
     path = Path(path)
     if path.suffix.lower() in (".xlsx", ".xlsm"):
         from openpyxl import load_workbook
         wb = load_workbook(path, read_only=True, data_only=True)
         ws = wb.active
-        rows = [["" if v is None else str(v).strip() for v in r] for r in ws.iter_rows(values_only=True)]
+        rows = [[_cell_text(v) for v in r] for r in ws.iter_rows(values_only=True)]
         wb.close()
     else:
         raw = path.read_bytes()

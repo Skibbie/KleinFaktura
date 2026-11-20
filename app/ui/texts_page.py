@@ -8,6 +8,8 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QLabel, QLineE
 from app.db import repo
 from app.db.database import get_setting, set_setting
 from app.money import fmt_eur, input_cents
+from app.ui.article_dialogs import (category_filter_combo, export_articles, fill_category_filter, run_article_import,
+                                    save_article_template)
 from app.ui.common import (CANCEL, SAVE, Ctx, ask_save, button, confirm, hbox, item, make_table, page_title,
                            selected_data)
 
@@ -173,7 +175,21 @@ class ArticleTab(_FormGuard, QWidget):
         self.current_id = None
         self._sel_id = None  # Artikel-ID der markierten Zeile (Tabelle ist sortierbar, Zeilennummern wandern)
         lay = QVBoxLayout(self)
-        self.table = make_table(["Bezeichnung", "Beschreibung", "Einheit", "Preis", "USt %", "Aktiv"], stretch_col=1)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Suchen in Bezeichnung und Beschreibung …")
+        self.search.setClearButtonEnabled(True)
+        self._articles: list[dict] = []
+        self.search.textChanged.connect(lambda *_: self._fill())
+        self.cat_filter = category_filter_combo(ctx.con)
+        self.cat_filter.currentIndexChanged.connect(lambda *_: self._fill())
+        lay.addLayout(hbox(self.search, self.cat_filter, None,
+                           button("Importieren…", self.import_file, tooltip="Artikel aus Excel oder CSV einlesen"),
+                           button("Vorlage speichern…", lambda: save_article_template(self),
+                                  tooltip="Excel-Vorlage mit den passenden Spaltenüberschriften"),
+                           button("Exportieren…", lambda: export_articles(self, self.ctx),
+                                  tooltip="Alle Artikel im Format der Vorlage – in Excel bearbeiten und wieder einlesen")))
+        self.table = make_table(["Bezeichnung", "Beschreibung", "Kategorie", "Einheit", "Preis", "USt %", "Aktiv"],
+                                stretch_col=1)
         self.table.itemSelectionChanged.connect(self._selection_changed)
         lay.addWidget(self.table)
         f = QFormLayout()
@@ -185,10 +201,14 @@ class ArticleTab(_FormGuard, QWidget):
         self.unit.addItems(["Stunden", "Stück", "pauschal", "km", "Tage", "m²"])
         self.price = QLineEdit()
         self.tax = QLineEdit("19")
+        self.category = QComboBox()
+        self.category.setEditable(True)
+        self.category.lineEdit().setPlaceholderText("frei wählbar, z.B. Beratung")
         self.active = QCheckBox("aktiv")
         self.active.setChecked(True)
         f.addRow("Bezeichnung", self.title)
         f.addRow("Beschreibung", self.desc)
+        f.addRow("Kategorie", self.category)
         f.addRow("Einheit", self.unit)
         f.addRow("Preis € (netto)", self.price)
         f.addRow("USt % (bei Regelbesteuerung)", self.tax)
@@ -201,18 +221,35 @@ class ArticleTab(_FormGuard, QWidget):
 
     def _snapshot(self):
         return (self.current_id, self.title.text(), self.desc.toPlainText(), self.unit.currentText(), self.price.text(),
-                self.tax.text(), self.active.isChecked())
+                self.tax.text(), self.active.isChecked(), self.category.currentText().strip())
+
+    def _refresh_categories(self):
+        """Vorschläge im Formular und Filterauswahl an die vorhandenen Kategorien anpassen."""
+        cats = repo.article_categories(self.ctx.con)
+        text = self.category.currentText()
+        self.category.blockSignals(True)
+        self.category.clear()
+        self.category.addItems(cats)
+        self.category.setCurrentText(text)
+        self.category.blockSignals(False)
+        fill_category_filter(self.cat_filter, self.ctx.con, self.cat_filter.currentData())
 
     def reload(self):
+        self._articles = repo.list_articles(self.ctx.con, include_inactive=True)
+        self._refresh_categories()
+        self._fill()
+
+    def _fill(self):
+        """Tabelle aus der geladenen Liste nach Suche und Kategorie füllen (ohne Datenbankzugriff je Tastendruck)."""
         self.table.blockSignals(True)
         self.table.setRowCount(0)
         self._sel_id = None
-        for a in repo.list_articles(self.ctx.con, include_inactive=True):
+        for a in repo.filter_articles(self._articles, self.search.text(), self.cat_filter.currentData()):
             r = self.table.rowCount()
             self.table.insertRow(r)
-            for i, v in enumerate([a["title"], a["description"], a["unit"], fmt_eur(a["unit_price_cents"]),
-                                   a["tax_rate"], "ja" if a["active"] else "nein"]):
-                self.table.setItem(r, i, item(v, a if i == 0 else None, align_right=i == 3))
+            for i, v in enumerate([a["title"], a["description"], a.get("category") or "", a["unit"],
+                                   fmt_eur(a["unit_price_cents"]), a["tax_rate"], "ja" if a["active"] else "nein"]):
+                self.table.setItem(r, i, item(v, a if i == 0 else None, align_right=i == 4))
             if a["id"] == self.current_id:
                 self.table.selectRow(r)
                 self._sel_id = a["id"]
@@ -244,6 +281,7 @@ class ArticleTab(_FormGuard, QWidget):
         self.unit.setCurrentText(a["unit"])
         self.price.setText(fmt_eur(a["unit_price_cents"], False))
         self.tax.setText(a["tax_rate"])
+        self.category.setCurrentText(a.get("category") or "")
         self.active.setChecked(bool(a["active"]))
         self.mark_clean()
 
@@ -264,6 +302,7 @@ class ArticleTab(_FormGuard, QWidget):
         self.desc.clear()
         self.unit.setCurrentText("Stunden")
         self.tax.setText("19")
+        self.category.setCurrentText(self.cat_filter.currentData() or "")   # gefilterte Kategorie vorschlagen
         self.active.setChecked(True)
         self.mark_clean()
 
@@ -279,10 +318,17 @@ class ArticleTab(_FormGuard, QWidget):
         self.current_id = repo.save_article(self.ctx.con, {
             "id": self.current_id, "title": self.title.text().strip(), "description": self.desc.toPlainText(),
             "unit": self.unit.currentText(), "unit_price_cents": price, "tax_rate": self.tax.text().strip() or "0",
-            "active": int(self.active.isChecked())})
+            "active": int(self.active.isChecked()), "category": self.category.currentText().strip()})
         self.reload()
         self.mark_clean()
         return True
+
+    def import_file(self):
+        if not self.confirm_leave():
+            return
+        if run_article_import(self, self.ctx):
+            self._clear_form()
+            self.reload()
 
     def delete(self):
         if self.current_id and confirm(self, "Löschen", "Artikel löschen? (Bestehende Belege bleiben unverändert.)"):

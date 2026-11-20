@@ -434,7 +434,7 @@ def test_upgrade_1_0_database(tmp_path, monkeypatch):
     blocks_before = len(repo.list_textblocks(c))
     cid = _customer(c)
     database.init_db(c)
-    assert database.schema_version(c) == 2
+    assert database.schema_version(c) == database.SCHEMA_VERSION
     assert len(list((tmp_path / "data" / "vor-update").glob("faktura-schema1-*.sqlite3"))) == 1
     assert c.execute("SELECT COUNT(*) FROM note").fetchone()[0] == 0
     assert repo.get_customer(c, cid)["last_name"] == "Mustermann"
