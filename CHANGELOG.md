@@ -5,6 +5,18 @@ automatisch als Beschreibung übernommen. Neue Einträge zuerst unter `## [Unver
 
 ## [Unveröffentlicht]
 
+- Artikel-Import aus Excel oder CSV (Textbausteine & Artikel → „Importieren…“): Spalten werden wie beim
+  Kundenimport per Überschrift zugeordnet, Preise in deutscher Schreibweise („1.234,50“). Eine Vorschau zeigt neue
+  Artikel, schon vorhandene (gleiche Bezeichnung) und fehlerhafte Zeilen; vorhandene Artikel werden wahlweise
+  übersprungen oder aktualisiert
+- „Vorlage speichern…“ legt eine Excel-Vorlage mit den passenden Spalten an, „Exportieren…“ speichert alle Artikel
+  im gleichen Format – in Excel bearbeiten und wieder einlesen
+- Artikel-Kategorien: frei wählbar, mit Vorschlägen aus den vorhandenen Kategorien. Die Datenbank wird beim ersten
+  Start automatisch ergänzt (Schema 3, Kopie vorher unter „vor-update“)
+- Artikelliste mit Suchfeld (Bezeichnung und Beschreibung) und Kategoriefilter
+- Beleg-Editor: „+ Artikel / Leistung…“ öffnet eine Auswahl mit Suche, Kategoriefilter, Preis und Einheit;
+  Doppelklick oder Enter übernimmt den Artikel
+
 ## [2.2.4] – 2026-11-20
 
 - Bank-Import: Beträge mit nachgestelltem Minus (z.B. „39,95-“, bei manchen Banken üblich) wurden als Gutschrift

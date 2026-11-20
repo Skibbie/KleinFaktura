@@ -13,8 +13,9 @@ from app import config
 
 SCHEMA_FILE = Path(__file__).with_name("schema.sql")
 
-# Bei jeder Schemaänderung erhöhen (PRAGMA user_version). 1 = Stand 1.0.0 inkl. Fahrten, 2 = Notizen (1.1.0).
-SCHEMA_VERSION = 2
+# Bei jeder Schemaänderung erhöhen (PRAGMA user_version). 1 = Stand 1.0.0 inkl. Fahrten, 2 = Notizen (1.1.0),
+# 3 = Artikelkategorien.
+SCHEMA_VERSION = 3
 
 
 class NewerDatabaseError(RuntimeError):
@@ -35,7 +36,13 @@ def add_column(con: sqlite3.Connection, table: str, column: str, declaration: st
 #   einer, bleibt die Datenbank auf dem alten Stand (Kopie liegt zusätzlich unter vor-update\).
 # - Neue Spalten zusätzlich in schema.sql eintragen (für neu angelegte Datenbanken) und hier mit add_column ergänzen.
 # Versionen 1 und 2 brachten nur neue Tabellen und brauchen keinen Schritt.
-MIGRATIONS: dict = {}
+def _v3_article_category(con: sqlite3.Connection) -> None:
+    """Version 3: Kategorie für Artikel/Leistungen (Freitext, leer = ohne Kategorie)."""
+    if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='article'").fetchone():
+        add_column(con, "article", "category", "TEXT DEFAULT ''")   # fehlt die Tabelle, legt schema.sql sie an
+
+
+MIGRATIONS: dict = {3: _v3_article_category}
 
 
 def migrate(con: sqlite3.Connection, current: int, target: int | None = None) -> None:

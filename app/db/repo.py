@@ -286,14 +286,45 @@ def delete_textblock(con: sqlite3.Connection, tid: int) -> None:
 
 
 # ---------------------------------------------------------------- Artikel
-def list_articles(con: sqlite3.Connection, include_inactive: bool = False) -> list[dict]:
+def list_articles(con: sqlite3.Connection, include_inactive: bool = False, search: str = "",
+                  category: str | None = None) -> list[dict]:
+    """Artikel, optional gefiltert: `search` in Bezeichnung und Beschreibung (ohne Groß-/Kleinschreibung, auch bei
+    Umlauten), `category` genau (leer = ohne Kategorie, None = alle)."""
     sql = "SELECT * FROM article" + ("" if include_inactive else " WHERE active=1") + " ORDER BY sort, title"
-    return [dict(r) for r in con.execute(sql)]
+    return filter_articles([dict(r) for r in con.execute(sql)], search, category)
+
+
+def filter_articles(articles: list[dict], search: str = "", category: str | None = None) -> list[dict]:
+    """Suche über Bezeichnung und Beschreibung; mehrere Wörter müssen alle vorkommen."""
+    words = search.casefold().split()
+    out = []
+    for a in articles:
+        if category is not None and (a.get("category") or "").strip().casefold() != category.strip().casefold():
+            continue
+        hay = f"{a.get('title') or ''}\n{a.get('description') or ''}".casefold()
+        if all(w in hay for w in words):
+            out.append(a)
+    return out
+
+
+def article_categories(con: sqlite3.Connection) -> list[str]:
+    """Vorhandene Kategorien (für Vorschläge und Filter), alphabetisch. Schreibweisen, die sich nur in Groß-/
+    Kleinschreibung unterscheiden, erscheinen einmal (der Filter unterscheidet sie ebenfalls nicht)."""
+    cats: dict[str, str] = {}
+    for (c,) in con.execute("SELECT DISTINCT category FROM article ORDER BY category"):
+        c = (c or "").strip()
+        if c:
+            cats.setdefault(c.casefold(), c)
+    return sorted(cats.values(), key=str.casefold)
+
+
+ARTICLE_FIELDS = ["title", "description", "unit", "unit_price_cents", "tax_rate", "active", "category"]
 
 
 def save_article(con: sqlite3.Connection, data: dict) -> int:
-    fields = ["title", "description", "unit", "unit_price_cents", "tax_rate", "active"]
+    fields = ARTICLE_FIELDS
     vals = [data.get(f) for f in fields]
+    vals[fields.index("category")] = (data.get("category") or "").strip()
     if data.get("id"):
         con.execute(f"UPDATE article SET {', '.join(f + '=?' for f in fields)} WHERE id=?", [*vals, data["id"]])
         return data["id"]

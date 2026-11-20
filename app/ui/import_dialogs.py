@@ -275,19 +275,21 @@ def run_hottgenroth_import(parent, ctx: Ctx) -> bool:
 
 # ======================================================================= CSV / Excel
 class CsvMappingDialog(QDialog):
-    def __init__(self, parent, headers: list[str], rows: list[list[str]]):
+    def __init__(self, parent, headers: list[str], rows: list[list[str]], fields: dict | None = None,
+                 guess: list[str] | None = None):
         super().__init__(parent)
+        fields = csv_import.TARGET_FIELDS if fields is None else fields
         self.setWindowTitle("Spalten zuordnen")
         self.resize(900, 520)
         lay = QVBoxLayout(self)
         lay.addWidget(QLabel("Bitte jeder Spalte ein Feld zuordnen (Vorschlag wurde automatisch erkannt):"))
         self.combos: list[QComboBox] = []
-        guess = csv_import.guess_mapping(headers)
+        guess = csv_import.guess_mapping(headers) if guess is None else guess
         self.table = QTableWidget(min(len(rows), 8) + 1, len(headers))
         self.table.setHorizontalHeaderLabels(headers)
         for ci, h in enumerate(headers):
             cb = QComboBox()
-            for key, label in csv_import.TARGET_FIELDS.items():
+            for key, label in fields.items():
                 cb.addItem(label, key)
             idx = cb.findData(guess[ci])
             cb.setCurrentIndex(max(idx, 0))

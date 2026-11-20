@@ -5,7 +5,7 @@ from datetime import datetime
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QFormLayout, QGridLayout,
-                               QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
+                               QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit, QScrollArea, QSplitter, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
@@ -14,6 +14,7 @@ from app.db import repo
 from app.db.database import get_decimal_setting, get_int_setting, get_setting
 from app.money import fmt_eur, fmt_qty, input_cents, input_decimal, line_total_cents
 from app.services import documents, kleinunternehmer, numbering
+from app.ui.article_dialogs import ArticlePickerDialog
 from app.ui.common import CANCEL, SAVE, Ctx, ask_save, button, confirm, date_edit, date_value, error, hbox, open_file, set_date
 from app.ui.customers import CustomerDialog, CustomerPicker, ProjectDialog
 from app.ui.mail_ui import ask_send_after_finalize, export_after_finalize, send_mail
@@ -435,10 +436,9 @@ class DocumentEditor(QDialog):
         if not arts:
             QMessageBox.information(self, "Artikel", "Noch keine Artikel angelegt (Textbausteine & Artikel).")
             return
-        labels = [f"{a['title']} – {fmt_eur(a['unit_price_cents'])}/{a['unit']}" for a in arts]
-        choice, ok = QInputDialog.getItem(self, "Artikel / Leistung", "Auswahl:", labels, 0, False)
-        if ok:
-            a = arts[labels.index(choice)]
+        dlg = ArticlePickerDialog(self, self.ctx.con, arts)
+        a = dlg.selected() if dlg.exec() else None
+        if a:
             desc = a["description"] or ""
             if self.project.currentData() and "{objekt_adresse}" not in desc:
                 desc = ("{objekt_adresse}\n" + desc).strip()
