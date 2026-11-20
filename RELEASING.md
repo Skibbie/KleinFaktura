@@ -26,6 +26,8 @@ Screenshots mit personenbezogenen Daten anhängen. Geplante Punkte werden einem 
    `KleinFaktura-X.Y.Z.zip`, signiert beide (`SHA256SUMS.txt` + `SHA256SUMS.txt.sig`) und legt das Release mit
    dem Changelog-Abschnitt an. Der Workflow bricht ab, wenn Tag und `APP_VERSION` nicht übereinstimmen oder das
    Secret `UPDATE_SIGNING_KEY` fehlt.
+6. Signieren wartet auf Freigabe: Actions → Lauf „Release“ → **Review deployments** → `release` → **Approve and
+   deploy**. Nur freigeben, wenn der Lauf zu deinem eigenen Tag gehört.
 
 ## Abhängigkeiten
 - `requirements.txt`: Laufzeit-Abhängigkeiten (Bereiche); `requirements-dev.txt`: zusätzlich Tests und Prüfwerkzeuge.
@@ -48,8 +50,12 @@ Ed25519-Schlüssel signiert ist, dessen öffentliches Gegenstück in `app/servic
 steht, und die geladene Datei zur signierten Prüfsumme passt. Ein manipuliertes Release (z.B. über ein
 kompromittiertes GitHub-Konto) wird so abgelehnt.
 
-- **Privater Schlüssel**: Datei `Dokumente\KleinFaktura-Update-Signaturschluessel.txt`, als GitHub-Secret
-  `UPDATE_SIGNING_KEY` hinterlegt (`gh secret set UPDATE_SIGNING_KEY < Datei`). Zusätzlich offline sichern
+- **Privater Schlüssel**: Datei `Dokumente\KleinFaktura-Update-Signaturschluessel.txt`, als Secret
+  `UPDATE_SIGNING_KEY` im Environment `release` hinterlegt (`gh secret set UPDATE_SIGNING_KEY --env release < Datei`),
+  nicht als Repository-Secret: So kommt nur der freigegebene Signierschritt an den Schlüssel, kein anderer
+  Workflow. Das Environment erlaubt nur Tags `v*` und verlangt die Freigabe durch Skibbie. Ob ein Schlüssel der
+  private ist (er sieht aus wie der öffentliche), prüft `python tools/check_update_key.py`; mit `--setzen` hinterlegt
+  es ihn danach direkt im Environment. Zusätzlich offline sichern
   (USB-Stick im Schrank, Passwortmanager) und die Datei danach vom PC löschen. Nie ins Repository einchecken.
 - **Verlust**: Ohne den Schlüssel können installierte Programme nicht mehr automatisch aktualisiert werden. Dann
   mit `python tools/make_update_key.py` ein neues Paar erzeugen, Secret ersetzen und ein Release veröffentlichen,

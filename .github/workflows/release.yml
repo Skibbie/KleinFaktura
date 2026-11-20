@@ -5,6 +5,7 @@ name: Release
 #   festgeschriebenen Abhängigkeiten mit Prüfsummen (requirements-build.txt).
 # - sign-release: bekommt nur die fertigen Dateien, signiert sie und legt das Release an. Hier läuft kein Build und
 #   kein Test, installiert wird allein cryptography (requirements-sign.txt, mit Prüfsummen).
+#   Läuft im Environment „release“: wartet auf Freigabe (Actions → Lauf → „Review deployments“), nur für Tags v*.
 # Alle Actions sind auf einen Commit festgelegt (Versionsnummer im Kommentar).
 # Probelauf ohne Veröffentlichung: Actions → Release → „Run workflow“ (baut nur, signiert und veröffentlicht nicht).
 
@@ -97,6 +98,8 @@ jobs:
     needs: build
     if: github.ref_type == 'tag'
     runs-on: windows-latest
+    # Der Signaturschlüssel liegt nur im Environment „release“: Freigabe durch Skibbie nötig, nur für Tags v*.
+    environment: release
     permissions:
       contents: write
     defaults:
