@@ -1,4 +1,4 @@
-"""PDF-Ausgabe für Angebote, Rechnungen, Stornos und Mahnungen (ReportLab).
+"""PDF-Ausgabe für Angebote, Rechnungen, Stornos, Mahnungen und Quittungen (ReportLab).
 
 Layout nach der bisherigen Vorlage: Logo links, Absender rechts, Anschriftfeld (DIN 5008 Form B),
 Anrede + Datum, Einleitung, Positionstabelle, Summe, Schlusstext, Gruß, Hinweise.
@@ -22,7 +22,7 @@ from reportlab.platypus import (BaseDocTemplate, Flowable, Frame, KeepTogether, 
                                 Paragraph, Spacer, Table, TableStyle)
 
 from app import config
-from app.money import fmt_date, fmt_eur, fmt_qty
+from app.money import betrag_in_worten, fmt_date, fmt_eur, fmt_qty
 
 PAGE_W, PAGE_H = A4
 LEFT = 20 * mm
@@ -396,5 +396,72 @@ def write_dunning_pdf(data: dict, path: Path | str) -> Path:
                            style=TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0)])))
     else:
         story.append(left)
+    doc.build(story, canvasmaker=_NumberedCanvas)
+    return path
+
+
+# ---------------------------------------------------------------- Quittungen
+def write_receipt_pdf(data: dict, path: Path | str) -> Path:
+    """Quittung über eine erfasste Zahlung zu einer Rechnung (Betrag in Ziffern und Worten, Unterschriftsfeld)."""
+    _register_fonts()
+    st = _styles()
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    inv, pay, comp = data["invoice"], data["payment"], data["company"]
+    data = dict(data, final=True)
+    title = f"Quittung {data['number']}"
+    doc = _build_doc(path, data, title)
+    story: list = [NextPageTemplate("Later")]
+    story.append(Table([["", _p(fmt_date(pay["pay_date"]), st["right"])]], colWidths=[CONTENT_W - 35 * mm, 35 * mm],
+                       style=TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)])))
+    story.append(Spacer(1, 4 * mm))
+    story.append(_p(title, st["title"]))
+    story.append(Spacer(1, 5 * mm))
+
+    amount = pay["amount_cents"]
+    method = (pay.get("method") or "").strip()
+    how = "in bar" if method.lower() in ("bar", "barzahlung", "") else f"per {method}"
+    payer = data.get("payer") or "dem Kunden"
+    text = (f"Hiermit wird bestätigt, dass von <b>{escape(payer)}</b> am {fmt_date(pay['pay_date'])} "
+            f"der Betrag von <b>{fmt_eur(amount)}</b> {escape(how)} erhalten wurde.")
+    story.append(Paragraph(text, st["base"]))
+    story.append(Spacer(1, 3 * mm))
+    story.append(Paragraph(f"In Worten: <i>{escape(betrag_in_worten(amount))}</i>", st["base"]))
+    story.append(Spacer(1, 6 * mm))
+
+    rows = [["Rechnung", "vom", "Rechnungsbetrag", "bisher bezahlt", "diese Zahlung", "noch offen"],
+            [inv["number"], fmt_date(inv["doc_date"]), fmt_eur(inv["total_gross_cents"]),
+             fmt_eur(data["paid_before_cents"]), fmt_eur(amount), fmt_eur(max(data["open_after_cents"], 0))]]
+    prow = [[_p(c, (st["head"] if r == 0 else st["cell"]) if ci < 2 else (st["headr"] if r == 0 else st["cellr"]))
+             for ci, c in enumerate(row)] for r, row in enumerate(rows)]
+    t = Table(prow, colWidths=[30 * mm, 22 * mm] + [(CONTENT_W - 52 * mm) / 4] * 4)
+    t.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, 0), 0.8, colors.black),
+                           ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2)]))
+    story.append(t)
+    story.append(Spacer(1, 5 * mm))
+
+    notes = []
+    if data.get("kleinunternehmer"):
+        notes.append("Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.")
+    else:
+        notes.append(f"Die Umsatzsteuer ist in der Rechnung {inv['number']} ausgewiesen.")
+    if pay.get("note"):
+        notes.append(f"Vermerk: {pay['note']}")
+    story.append(_p("\n".join(notes), st["note"]))
+    story.append(Spacer(1, 22 * mm))
+
+    city = comp.get("city") or ""
+    sig_w = 75 * mm
+    signer = comp.get("owner") or comp.get("name")
+    place = f"{city}, {fmt_date(pay['pay_date'])}" if city else fmt_date(pay["pay_date"])
+    sig = Table([[_p(place, st["base"]), "", ""],
+                 [_p("Ort, Datum", st["small"]), "",
+                  _p("Unterschrift Zahlungsempfänger" + (f" ({signer})" if signer else ""), st["small"])]],
+                colWidths=[CONTENT_W - sig_w - 15 * mm, 15 * mm, sig_w], hAlign="LEFT")
+    sig.setStyle(TableStyle([("LINEABOVE", (0, 1), (0, 1), 0.5, colors.black),
+                             ("LINEABOVE", (2, 1), (2, 1), 0.5, colors.black),
+                             ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+                             ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+    story.append(KeepTogether([sig]))
     doc.build(story, canvasmaker=_NumberedCanvas)
     return path

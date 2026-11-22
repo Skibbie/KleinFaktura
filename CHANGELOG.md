@@ -5,6 +5,11 @@ automatisch als Beschreibung übernommen. Neue Einträge zuerst unter `## [Unver
 
 ## [Unveröffentlicht]
 
+- Quittungen: Nach dem Buchen einer Barzahlung bietet das Programm eine Quittung (PDF) an; zu jeder erfassten
+  Zahlung gibt es sie auch über den neuen Knopf „Quittung“ in der Rechnungsliste. Sie enthält den Betrag in Ziffern
+  und Worten, Rechnungsbezug, Restbetrag und ein Unterschriftsfeld. Quittungen werden wie Mahnungen schreibgeschützt
+  im Archiv abgelegt und im Protokoll vermerkt; ein erneuter Aufruf öffnet die vorhandene Quittung
+
 ## [2.3.0] – 2026-11-20
 
 - Artikel-Import aus Excel oder CSV (Textbausteine & Artikel → „Importieren…“): Spalten werden wie beim

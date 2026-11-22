@@ -18,6 +18,8 @@ class PaymentDialog(QDialog):
     def __init__(self, parent, ctx: Ctx, doc: dict):
         super().__init__(parent)
         self.ctx, self.doc = ctx, doc
+        self.payment_id: int | None = None
+        self.cash = False   # nach dem Speichern: Barzahlung erhalten (Quittung anbieten)
         self.setWindowTitle(f"Zahlung erfassen – Rechnung {doc['number']}")
         lay = QVBoxLayout(self)
         open_ = payments.open_amount(ctx.con, doc["id"])
@@ -69,8 +71,9 @@ class PaymentDialog(QDialog):
             cents = input_cents(self.amount.text())
             if not self._confirm_amount(cents):
                 return
-            payments.add_payment(self.ctx.con, self.doc["id"], date_value(self.date), cents,
-                                 self.method.currentText(), self.note.text())
+            self.payment_id = payments.add_payment(self.ctx.con, self.doc["id"], date_value(self.date), cents,
+                                                   self.method.currentText(), self.note.text())
+            self.cash = cents > 0 and self.method.currentText().strip().lower() in ("bar", "barzahlung")
         except Exception as e:  # noqa: BLE001
             error(self, "Zahlung", e)
             return
@@ -82,10 +85,42 @@ def record_payment(parent, ctx: Ctx, doc_id: int) -> bool:
     if not d or d["doc_type"] != "rechnung" or d["status"] != "festgeschrieben":
         QMessageBox.information(parent, "Zahlung", "Zahlungen können nur auf festgeschriebene Rechnungen gebucht werden.")
         return False
-    if PaymentDialog(parent, ctx, d).exec():
+    dlg = PaymentDialog(parent, ctx, d)
+    if dlg.exec():
         ctx.changed()
+        if dlg.cash and confirm(parent, "Quittung", "Barzahlung gebucht.\n\n"
+                                                   "Jetzt eine Quittung für den Kunden erstellen?"):
+            make_receipt(parent, ctx, dlg.payment_id)
         return True
     return False
+
+
+def make_receipt(parent, ctx: Ctx, payment_id: int) -> None:
+    try:
+        path = payments.create_receipt(ctx.con, payment_id)
+    except Exception as e:  # noqa: BLE001
+        error(parent, "Quittung", e)
+        return
+    open_file(path)
+
+
+def choose_receipt(parent, ctx: Ctx, doc_id: int) -> None:
+    """Quittung zu einer Zahlung der Rechnung (bei mehreren Zahlungen per Auswahl)."""
+    pays = [p for p in payments.list_payments(ctx.con, doc_id) if p["amount_cents"] > 0]
+    if not pays:
+        QMessageBox.information(parent, "Quittung", "Zu dieser Rechnung ist noch keine Zahlung erfasst.")
+        return
+    pay = pays[0]
+    if len(pays) > 1:
+        from PySide6.QtWidgets import QInputDialog
+        labels = [f"{fmt_date(p['pay_date'])}  {fmt_eur(p['amount_cents'])}  {p['method']}" for p in pays]
+        cash = [i for i, p in enumerate(pays) if (p["method"] or "").strip().lower() in ("bar", "barzahlung")]
+        choice, ok = QInputDialog.getItem(parent, "Quittung", "Zu welcher Zahlung?", labels,
+                                          cash[-1] if cash else len(pays) - 1, False)
+        if not ok:
+            return
+        pay = pays[labels.index(choice)]
+    make_receipt(parent, ctx, pay["id"])
 
 
 def make_dunning(parent, ctx: Ctx, doc_id: int) -> None:
@@ -143,7 +178,8 @@ class DocumentsPage(QWidget):
         if kind == "angebot":
             self.sel_buttons["convert"] = button("In Rechnung umwandeln", self.convert)
         else:
-            self.sel_buttons.update(payment=button("Zahlung erfassen", self.payment), dunning=button("Mahnen", self.dunning),
+            self.sel_buttons.update(payment=button("Zahlung erfassen", self.payment), receipt=button("Quittung", self.receipt),
+                                    dunning=button("Mahnen", self.dunning),
                                     cancel=button("Stornieren", self.cancel, danger=True))
         self.sel_buttons["delete"] = button("Entwurf löschen", self.delete, danger=True)
         btns = [button(new_label, self.new, primary=True), *self.sel_buttons.values(), None]
@@ -220,11 +256,13 @@ class DocumentsPage(QWidget):
             "copy": (bool(d), "Bitte einen Beleg markieren."),
             "convert": (bool(d), "Bitte ein Angebot markieren."),
             "payment": (invoice, "Zahlungen nur auf festgeschriebene Rechnungen."),
+            "receipt": (invoice and int(d.get("paid_cents") or 0) > 0, "Erst nach einer erfassten Zahlung."),
             "dunning": (invoice and not cancelled and d["open_cents"] > 0, "Nur offene, festgeschriebene Rechnungen."),
             "cancel": (invoice and not cancelled, "Nur festgeschriebene, noch nicht stornierte Rechnungen."),
             "delete": (bool(d) and d["status"] == "entwurf", "Nur Entwürfe können gelöscht werden."),
         }
-        tips = {"mail": "Thunderbird mit vorbereiteter Mail und PDF-Anhang öffnen"}
+        tips = {"mail": "Thunderbird mit vorbereiteter Mail und PDF-Anhang öffnen",
+                "receipt": "Quittung (PDF) über eine erfasste Zahlung, z.B. bei Barzahlung"}
         for key, btn in self.sel_buttons.items():
             ok, why = rules[key]
             btn.setEnabled(ok)
@@ -293,6 +331,11 @@ class DocumentsPage(QWidget):
         did = self._sel()
         if did:
             record_payment(self, self.ctx, did)
+
+    def receipt(self):
+        did = self._sel()
+        if did:
+            choose_receipt(self, self.ctx, did)
 
     def dunning(self):
         did = self._sel()

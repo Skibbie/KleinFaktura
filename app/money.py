@@ -122,3 +122,51 @@ def parse_date(value) -> str | None:
         except ValueError:
             return None
     return None
+
+
+_ONES = ["null", "ein", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun", "zehn", "elf", "zwölf",
+         "dreizehn", "vierzehn", "fünfzehn", "sechzehn", "siebzehn", "achtzehn", "neunzehn"]
+_TENS = ["", "", "zwanzig", "dreißig", "vierzig", "fünfzig", "sechzig", "siebzig", "achtzig", "neunzig"]
+
+
+def _words_below_1000(n: int) -> str:
+    out = ""
+    if n >= 100:
+        out += _ONES[n // 100] + "hundert"
+        n %= 100
+    if n >= 20:
+        out += ("" if n % 10 == 0 else _ONES[n % 10] + "und") + _TENS[n // 10]
+    elif n:
+        out += _ONES[n]
+    return out
+
+
+def int_in_worten(n: int, before_noun: bool = False) -> str:
+    """Ganze Zahl (0 … 999.999.999) in deutschen Worten, z.B. 1201 -> „eintausendzweihunderteins“.
+    Vor einem Hauptwort (before_noun) heißt es „ein Euro“ statt „eins Euro“."""
+    if n < 0 or n >= 1_000_000_000:
+        raise ValueError("Zahl außerhalb des Bereichs für die Wortdarstellung")
+    if n == 0:
+        return "null"
+    millions, rest = divmod(n, 1_000_000)
+    thousands, ones = divmod(rest, 1000)
+    parts = []
+    if millions:
+        parts.append("eine Million " if millions == 1 else _words_below_1000(millions) + " Millionen ")
+    if thousands:
+        parts.append(_words_below_1000(thousands) + "tausend")
+    if ones:
+        w = _words_below_1000(ones)
+        parts.append(w + "s" if w.endswith("ein") and not before_noun else w)   # „eins“ am Ende, „einhundert“ in der Mitte
+    return "".join(parts).strip()
+
+
+def betrag_in_worten(cents: int) -> str:
+    """Betrag für Quittungen, z.B. 12345 -> „einhundertdreiundzwanzig Euro fünfundvierzig Cent“."""
+    if cents < 0:
+        raise ValueError("Negativer Betrag")
+    euro, ct = divmod(int(cents), 100)
+    txt = f"{int_in_worten(euro, True)} Euro"
+    if ct:
+        txt += f" {int_in_worten(ct, True)} Cent"
+    return txt
