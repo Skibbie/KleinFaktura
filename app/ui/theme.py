@@ -206,7 +206,8 @@ QCheckBox::indicator, QRadioButton::indicator {{ width: 15px; height: 15px; }}
 QCheckBox::indicator {{ border: 1px solid #93A3A0; border-radius: 3px; background: {SURFACE}; }}
 QCheckBox::indicator:checked {{ background: {ACTION}; border-color: {ACTION}; image: url({_ASSET}/check.svg); }}
 QRadioButton::indicator {{ border: 1px solid #93A3A0; border-radius: 8px; background: {SURFACE}; }}
-QRadioButton::indicator:checked {{ background: {SURFACE}; border: 5px solid {ACTION}; }}
+QRadioButton::indicator:checked {{ background: {SURFACE}; border: 5px solid {ACTION}; width: 7px; height: 7px; }}
+/* Ausgewählt: dicker Rand, Innenfläche entsprechend kleiner – Gesamtgröße wie unausgewählt (17 px), bleibt rund */
 
 /* Tabellen */
 QTableWidget, QTableView, QListWidget {{
