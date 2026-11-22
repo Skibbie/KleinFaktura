@@ -12,6 +12,7 @@ from app import config
 from app.db.database import PROFILES, apply_profile, get_setting, set_setting, transaction
 from app.money import input_decimal
 from app.services import audit, backup, kleinunternehmer, mail, numbering, secret
+from app.validation import company_problems, normalize_company
 from app.ui import update_ui
 from app.ui.common import CANCEL, SAVE, Ctx, ask_save, button, confirm, error, hbox, page_title
 
@@ -402,9 +403,21 @@ class SettingsPage(QWidget):
                                                        f"({config.archive_dir()}). Bitte einen anderen Ordner wählen.")
         return not bad
 
+    def _company_ok(self) -> bool:
+        """PLZ, IBAN, BIC und E-Mail prüfen; IBAN/BIC einheitlich schreiben."""
+        values = {k: e.text() for k, e in self.edits.items() if k.startswith("company.")}
+        problems = company_problems(values)
+        if problems:
+            QMessageBox.warning(self, "Einstellungen", "Bitte korrigieren:\n\n• " + "\n• ".join(problems))
+            return False
+        for key, v in normalize_company(values).items():
+            if v != values[key]:
+                self.edits[key].setText(v)
+        return True
+
     def save(self, quiet: bool = False) -> bool:
         numbers = self._normalized_numbers()
-        if numbers is None or not self._folders_ok():
+        if numbers is None or not self._folders_ok() or not self._company_ok():
             return False
         if self.checks["backup.encrypt"].isChecked() and len(self.edits["backup.password"].text()) < 8:
             QMessageBox.warning(self, "Einstellungen", "Für verschlüsselte Sicherungen bitte ein Passwort mit "

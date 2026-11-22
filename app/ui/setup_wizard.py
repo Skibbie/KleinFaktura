@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QButtonGroup, QFileDialog, QFormLayout, QLabel, Q
 from app import config
 from app.db.database import PROFILES, apply_profile, get_setting, set_setting, transaction
 from app.services import audit
+from app.validation import company_problems, normalize_company
 from app.ui.common import button, hbox
 
 DONE_SETTING = "setup.done"
@@ -24,6 +25,12 @@ COMPANY_PAGE = [
     ("company.email", "E-Mail", False), ("company.phone", "Telefon", False), ("company.web", "Web", False),
 ]
 BANK_PAGE = [("company.iban", "IBAN", False), ("company.bic", "BIC", False), ("company.bank", "Bank", False)]
+
+
+def _section(text: str) -> QLabel:
+    lbl = QLabel(text)
+    lbl.setObjectName("sectionTitle")
+    return lbl
 
 
 def needs_setup(con) -> bool:
@@ -44,6 +51,7 @@ def copy_logo_to_data_dir(logo: str) -> Path:
 def apply_setup(con, values: dict[str, str], profile: str, tax_mode: str, logo: str, backup_dir: str) -> None:
     """Übernimmt die Angaben des Assistenten. Das Logo wird in den Datenordner kopiert, damit es unabhängig vom
     ursprünglichen Speicherort erhalten bleibt (und in Sicherungen landet)."""
+    values = normalize_company(values)
     with transaction(con):
         for key, v in values.items():
             set_setting(con, key, v.strip())
@@ -75,9 +83,27 @@ class _FormPage(QWizardPage):
             if required:
                 self.required.append(e)
                 e.textChanged.connect(self.completeChanged)
+            e.textChanged.connect(lambda *_: self.error.hide())
+        self.keys = [key for key, _label, _req in fields]
+        self.edits = edits
+        self.error = QLabel()
+        self.error.setObjectName("error")
+        self.error.setWordWrap(True)
+        self.error.hide()
+        f.addRow(self.error)
 
     def isComplete(self) -> bool:
         return all(e.text().strip() for e in self.required)
+
+    def validatePage(self) -> bool:
+        """PLZ, IBAN, BIC und E-Mail prüfen; Fehler auf der Seite anzeigen statt weiterzugehen."""
+        problems = company_problems({k: self.edits[k].text() for k in self.keys})
+        self.error.setText("Bitte korrigieren:\n• " + "\n• ".join(problems))
+        self.error.setVisible(bool(problems))
+        if problems and self.wizard():
+            w = self.wizard()
+            w.resize(w.width(), max(w.height(), w.sizeHint().height()))   # Hinweis nicht abschneiden
+        return not problems
 
 
 class SetupWizard(QWizard):
@@ -91,7 +117,7 @@ class SetupWizard(QWizard):
         self.setButtonText(QWizard.BackButton, "< Zurück")
         self.setButtonText(QWizard.FinishButton, "Fertig")
         self.setButtonText(QWizard.CancelButton, "Später")
-        self.setMinimumSize(640, 520)
+        self.setMinimumSize(640, 600)
         self.edits: dict[str, QLineEdit] = {}
 
         start = QWizardPage()
@@ -119,6 +145,7 @@ class SetupWizard(QWizard):
         page.setTitle("Branche und Besteuerung")
         page.setSubTitle("Die Branche bestimmt die Startartikel und Fahrtanlässe; alles bleibt frei anpassbar.")
         lay = QVBoxLayout(page)
+        lay.addWidget(_section("Branche"))
         self.profile_group = QButtonGroup(page)
         current = get_setting(ctx.con, "profile")
         for key, p in PROFILES.items():
@@ -128,6 +155,7 @@ class SetupWizard(QWizard):
             self.profile_group.addButton(rb)
             lay.addWidget(rb)
         lay.addSpacing(16)
+        lay.addWidget(_section("Besteuerung"))
         self.tax_group = QButtonGroup(page)
         self.tax_ku = QRadioButton("Kleinunternehmer (§ 19 UStG) – keine Umsatzsteuer auf Rechnungen")
         from app.services.kleinunternehmer import REGEL_HINWEIS, REGEL_LABEL
@@ -140,6 +168,7 @@ class SetupWizard(QWizard):
         regel_hint = QLabel(REGEL_HINWEIS)
         regel_hint.setWordWrap(True)
         regel_hint.setObjectName("muted")
+        regel_hint.setContentsMargins(24, 0, 0, 0)   # eingerückt unter „Regelbesteuerung“
         lay.addWidget(regel_hint)
         lay.addStretch(1)
         self.addPage(page)

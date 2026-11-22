@@ -89,8 +89,9 @@ class TextField(QWidget):
         self.remember = QCheckBox("In Textbausteine übernehmen")
         self.remember.setToolTip("Geänderter Text wird beim Speichern als Textbaustein angelegt, falls es ihn noch nicht gibt")
         self.remember.setChecked(get_setting(ctx.con, "textblock.remember_default", "1") == "1")
-        self.remember.setVisible(remember)
         outer.addWidget(self.remember)
+        # erst nach dem Einbau: setVisible(True) an einem Widget ohne Eltern öffnet es kurz als eigenes Fenster
+        self.remember.setVisible(remember)
 
     def pick(self):
         dlg = TextPicker(self, self.ctx, self.categories)

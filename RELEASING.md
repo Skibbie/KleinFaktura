@@ -14,6 +14,10 @@ GitHub → Issues → „Neues Issue“ → Vorlage **Fehler** oder **Wunsch**. 
 Screenshots mit personenbezogenen Daten anhängen. Geplante Punkte werden einem Meilenstein (z.B. `v1.1.0`) zugeordnet.
 
 ## Neue Version veröffentlichen
+Vorab läuft mit den Tests auch der Klicktest (`tools/klicktest.py`): Er bedient unsichtbar jede Seite, jede Maske
+und jeden Dialog mit Wegwerfdaten und meldet aufblitzende Fenster, flackernde Dialoge und Programmfehler. Einzeln:
+`python tools/klicktest.py reject` bzw. `accept` (mit `KLICK_V=1` wird jeder Klick protokolliert).
+
 1. `CHANGELOG.md`: Einträge aus „Unveröffentlicht“ in einen neuen Abschnitt `## [X.Y.Z] – Datum` verschieben.
 2. `app/config.py`: `APP_VERSION = "X.Y.Z"`.
 3. Bei Änderungen an `schema.sql`: `SCHEMA_VERSION` in `app/db/database.py` erhöhen und für die neue Version
