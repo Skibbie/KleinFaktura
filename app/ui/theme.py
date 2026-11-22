@@ -42,17 +42,20 @@ def scale_color(ratio: float) -> str:
 
 
 class _MaximizeDialogs(QObject):
-    """Öffnet alle eigenen Dialoge maximiert (Meldungs-, Datei- und Eingabedialoge bleiben klein)."""
+    """Gibt allen eigenen Dialogen Maximieren- und Minimieren-Knöpfe (Meldungs-, Datei- und Eingabedialoge nicht).
+    Die Dialoge öffnen in ihrer normalen Größe."""
+
+    SMALL = (QMessageBox, QFileDialog, QInputDialog, QColorDialog, QFontDialog, QProgressDialog)
 
     def eventFilter(self, obj, ev):
-        if ev.type() == QEvent.Show and isinstance(obj, QDialog) and obj.isWindow() and not isinstance(
-                obj, (QMessageBox, QFileDialog, QInputDialog, QColorDialog, QFontDialog, QProgressDialog)):
-            if not obj.property("_faktura_max"):
-                obj.setProperty("_faktura_max", True)
-                obj.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
-                obj.setWindowFlag(Qt.WindowMinimizeButtonHint, True)
-                obj.setWindowState(obj.windowState() | Qt.WindowMaximized)
-                obj.show()
+        # Nur beim Polieren vor dem ersten Anzeigen: Fensterflags an einem sichtbaren Fenster zu ändern erzeugt es neu –
+        # früher (beim Show-Ereignis) blitzte der Dialog dadurch kurz klein links oben auf.
+        if ev.type() != QEvent.Polish or not isinstance(obj, QDialog) or isinstance(obj, self.SMALL):
+            return False
+        if obj.isWindow() and not obj.isVisible():
+            flags = obj.windowFlags() | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint
+            if flags != obj.windowFlags():
+                obj.setWindowFlags(flags)
         return False
 
 

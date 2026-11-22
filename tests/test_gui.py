@@ -227,8 +227,8 @@ def test_unsaved_changes_guard(gui):
     assert win.stack.currentIndex() == 0 and sp.edits["company.phone"].text() == old
 
     # Artikel: neue Leistung, beim Navigieren speichern, erneutes Speichern legt keine Dublette an
-    win.nav.setCurrentRow(win.page_index("texte"))
-    at = win.pages[win.page_index("texte")].art_tab
+    win.nav.setCurrentRow(win.page_index("artikel"))
+    at = win.pages[win.page_index("artikel")].art_tab
     at.new()
     at.title.setText("Blower-Door-Test")
     at.price.setText("350")

@@ -9,6 +9,9 @@ automatisch als Beschreibung übernommen. Neue Einträge zuerst unter `## [Unver
   Zahlung gibt es sie auch über den neuen Knopf „Quittung“ in der Rechnungsliste. Sie enthält den Betrag in Ziffern
   und Worten, Rechnungsbezug, Restbetrag und ein Unterschriftsfeld. Quittungen werden wie Mahnungen schreibgeschützt
   im Archiv abgelegt und im Protokoll vermerkt; ein erneuter Aufruf öffnet die vorhandene Quittung
+- Artikel / Leistungen haben einen eigenen Eintrag im Menü (unter „Rechnungen“); „Textbausteine“ steht für sich
+- Beim Öffnen von Dialogen (z. B. „+ Artikel / Leistung…“ im Beleg-Editor) blitzt kein kleines Fenster links oben
+  mehr auf
 
 ## [2.3.0] – 2026-11-20
 

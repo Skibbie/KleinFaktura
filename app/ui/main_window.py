@@ -18,14 +18,14 @@ from app.ui.export_page import ExportPage
 from app.ui.notes_page import NotesPage
 from app.ui.open_items import OpenItemsPage
 from app.ui.settings_page import SettingsPage
-from app.ui.texts_page import TextsPage
+from app.ui.texts_page import ArticlesPage, TextsPage
 from app.ui.trips_page import TripsPage
 from app.ui import setup_wizard, update_ui
 
-PAGES = ["Übersicht", "Kunden", "Notizen", "Angebote", "Rechnungen", "Offene Posten", "Ausgaben", "Fahrten", "EÜR-Werte",
-         "Textbausteine & Artikel", "Export & Sicherung", "Einstellungen"]
-PAGE_KEYS = ["uebersicht", "kunden", "notizen", "angebote", "rechnungen", "offene_posten", "ausgaben", "fahrten", "euer", "texte",
-             "export", "einstellungen"]
+PAGES = ["Übersicht", "Kunden", "Notizen", "Angebote", "Rechnungen", "Artikel / Leistungen", "Offene Posten", "Ausgaben",
+         "Fahrten", "EÜR-Werte", "Textbausteine", "Export & Sicherung", "Einstellungen"]
+PAGE_KEYS = ["uebersicht", "kunden", "notizen", "angebote", "rechnungen", "artikel", "offene_posten", "ausgaben", "fahrten",
+             "euer", "texte", "export", "einstellungen"]
 
 
 class MainWindow(QMainWindow):
@@ -69,6 +69,7 @@ class MainWindow(QMainWindow):
             NotesPage(ctx),
             DocumentsPage(ctx, "angebot"),
             DocumentsPage(ctx, "rechnung"),
+            ArticlesPage(ctx),
             OpenItemsPage(ctx),
             ExpensesPage(ctx),
             TripsPage(ctx),

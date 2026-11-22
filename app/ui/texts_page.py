@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-                               QMessageBox, QPlainTextEdit, QSplitter, QTabWidget, QVBoxLayout, QWidget)
+                               QMessageBox, QPlainTextEdit, QSplitter, QVBoxLayout, QWidget)
 
 from app.db import repo
 from app.db.database import get_setting, set_setting
@@ -178,6 +178,7 @@ class ArticleTab(_FormGuard, QWidget):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Suchen in Bezeichnung und Beschreibung …")
         self.search.setClearButtonEnabled(True)
+        self.search.setMinimumWidth(280)
         self._articles: list[dict] = []
         self.search.textChanged.connect(lambda *_: self._fill())
         self.cat_filter = category_filter_combo(ctx.con)
@@ -341,12 +342,23 @@ class TextsPage(QWidget):
     def __init__(self, ctx: Ctx):
         super().__init__()
         lay = QVBoxLayout(self)
-        lay.addWidget(page_title("Textbausteine & Artikel"))
-        tabs = QTabWidget()
-        self.tb_tab, self.art_tab = TextblockTab(ctx), ArticleTab(ctx)
-        tabs.addTab(self.tb_tab, "Textbausteine")
-        tabs.addTab(self.art_tab, "Artikel / Leistungen")
-        lay.addWidget(tabs)
+        lay.addWidget(page_title("Textbausteine"))
+        self.tb_tab = TextblockTab(ctx)
+        lay.addWidget(self.tb_tab, 1)
 
     def confirm_leave(self) -> bool:
-        return self.tb_tab.confirm_leave() and self.art_tab.confirm_leave()
+        return self.tb_tab.confirm_leave()
+
+
+class ArticlesPage(QWidget):
+    """Eigener Menüeintrag „Artikel / Leistungen“."""
+
+    def __init__(self, ctx: Ctx):
+        super().__init__()
+        lay = QVBoxLayout(self)
+        lay.addWidget(page_title("Artikel / Leistungen"))
+        self.art_tab = ArticleTab(ctx)
+        lay.addWidget(self.art_tab, 1)
+
+    def confirm_leave(self) -> bool:
+        return self.art_tab.confirm_leave()

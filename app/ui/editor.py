@@ -434,7 +434,7 @@ class DocumentEditor(QDialog):
     def add_article(self):
         arts = repo.list_articles(self.ctx.con)
         if not arts:
-            QMessageBox.information(self, "Artikel", "Noch keine Artikel angelegt (Textbausteine & Artikel).")
+            QMessageBox.information(self, "Artikel", "Noch keine Artikel angelegt (Menü „Artikel / Leistungen“).")
             return
         dlg = ArticlePickerDialog(self, self.ctx.con, arts)
         a = dlg.selected() if dlg.exec() else None
