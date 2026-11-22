@@ -5,6 +5,8 @@ automatisch als Beschreibung übernommen. Neue Einträge zuerst unter `## [Unver
 
 ## [Unveröffentlicht]
 
+## [2.4.0] – 2026-11-22
+
 - Quittungen: Nach dem Buchen einer Barzahlung bietet das Programm eine Quittung (PDF) an; zu jeder erfassten
   Zahlung gibt es sie auch über den neuen Knopf „Quittung“ in der Rechnungsliste. Sie enthält den Betrag in Ziffern
   und Worten, Rechnungsbezug, Restbetrag und ein Unterschriftsfeld. Quittungen werden wie Mahnungen schreibgeschützt
