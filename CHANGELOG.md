@@ -5,6 +5,8 @@ automatisch als Beschreibung übernommen. Neue Einträge zuerst unter `## [Unver
 
 ## [Unveröffentlicht]
 
+- „Neue Rechnung“ / „Neues Angebot“: beim Öffnen blitzen keine kleinen Fenster mehr auf
+
 ## [2.4.0] – 2026-11-22
 
 - Quittungen: Nach dem Buchen einer Barzahlung bietet das Programm eine Quittung (PDF) an; zu jeder erfassten
