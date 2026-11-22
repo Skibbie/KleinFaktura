@@ -33,7 +33,7 @@ Datenbank (die Daten bleiben unverändert).
 | Energieberatung | Artikel wie Heizlastberechnung und hydraulischer Abgleich, passende Fahrtanlässe, Kundenimport aus Hottgenroth |
 
 Beim ersten Wählen eines Profils kommen dessen Startwerte dazu. Ein Wechsel löscht nichts; alles lässt sich unter
-„Textbausteine & Artikel“ frei anpassen.
+„Artikel / Leistungen“ und „Textbausteine“ frei anpassen.
 
 ## Funktionen
 | Bereich | Inhalt |
