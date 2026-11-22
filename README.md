@@ -47,6 +47,7 @@ Beim ersten Wählen eines Profils kommen dessen Startwerte dazu. Ein Wechsel lö
 | Altbelege | Import bestehender Rechnungen aus .ods / .xlsx / .pdf, Prüfdialog, Nummernreservierung, Dubletten- und Kollisionsprüfung |
 | Kleinunternehmer | Wächter für 25.000 € (Vorjahr) / 100.000 € (lfd. Jahr), Prüfung vor jedem Festschreiben, Umschalten auf Regelbesteuerung (eingeschränkt, siehe Hinweise) |
 | GoBD | Trigger gegen Änderungen über das Programm (bei jedem Start erneuert), Hash-Kette im Protokoll, Archiv mit SHA-256, Integritätsprüfung, Datenexport für Betriebsprüfung, Vorlage Verfahrensdokumentation (`docs/`) |
+| Quittungen | Quittung (PDF) zu erfassten Zahlungen, z.B. Barzahlungen – Betrag in Worten, Unterschriftsfeld, Ablage im Archiv |
 | Ausgaben | Ausgabenbuch mit Kategorien nach Anlage EÜR, Beleg-Archiv (PDF/Foto, schreibgeschützt mit Prüfsumme), Abschreibung über die Nutzungsdauer (monatsgenau), 70 % Bewirtung, Übernahme aus CSV-Kontoauszug, Jahresabschluss (danach unveränderbar) |
 | Fahrten | Fahrtennachweis für den Privat-Pkw (Datum, Kunde/Objekt, Ziel, Anlass, km, verknüpfte Rechnung), Kilometerpauschale je Fahrt gespeichert, km-Vorschlag aus der letzten Fahrt zum selben Ziel, Excel-Export; Summe fließt in die EÜR-Werte |
 | EÜR-Werte | Jahressummen je EÜR-Bereich zum Übertragen in die Steuersoftware, Abhakliste, Excel-Export |

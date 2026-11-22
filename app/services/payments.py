@@ -95,6 +95,68 @@ def add_payment(con: sqlite3.Connection, doc_id: int, pay_date: str, amount, met
         return cur.lastrowid
 
 
+def receipt_number(con: sqlite3.Connection, payment: dict) -> str:
+    """Quittungsnummer = Rechnungsnummer + laufende Nummer der Zahlung auf dieser Rechnung (z.B. RE2026-0012-Q1)."""
+    ids = [r[0] for r in con.execute("SELECT id FROM payment WHERE document_id=? ORDER BY id", (payment["document_id"],))]
+    inv = documents.get_document(con, payment["document_id"])
+    return f"{inv['number']}-Q{ids.index(payment['id']) + 1}"
+
+
+def receipt_path(con: sqlite3.Connection, payment: dict) -> Path:
+    path = documents.archive_path_for(receipt_number(con, payment), payment["pay_date"], "rechnung")
+    return path.with_name(path.name.replace("Rechnung-", "Quittung-", 1))
+
+
+def create_receipt(con: sqlite3.Connection, payment_id: int, pdf_writer=None) -> Path:
+    """Quittung (PDF) über eine erfasste Zahlung. Wie Zahlungen ist sie unveränderbar: Gibt es sie schon im Archiv,
+    wird die vorhandene Datei zurückgegeben statt eine zweite, womöglich abweichende Quittung zu erzeugen."""
+    if pdf_writer is None:
+        from app.output.pdf_invoice import write_receipt_pdf as pdf_writer
+    row = con.execute("SELECT * FROM payment WHERE id=?", (payment_id,)).fetchone()
+    if not row:
+        raise ValueError("Zahlung nicht gefunden.")
+    pay = dict(row)
+    if pay["amount_cents"] <= 0:
+        raise ValueError("Quittungen gibt es nur für erhaltene Beträge, nicht für Rückzahlungen oder Korrekturen.")
+    path = receipt_path(con, pay)
+    if path.exists():
+        return path
+    inv = documents.get_document(con, pay["document_id"])
+    import json
+    cust = (repo.get_customer(con, inv["customer_id"]) if inv.get("customer_id") else None) or {}
+    recipient = json.loads(inv["recipient_json"]) if inv.get("recipient_json") else {"lines": repo.recipient_lines(cust)}
+    payer = repo.customer_display_name(cust) if cust else (recipient.get("lines") or [""])[0]
+    before = con.execute("SELECT COALESCE(SUM(amount_cents),0) FROM payment WHERE document_id=? AND id<?",
+                         (inv["id"], payment_id)).fetchone()[0]
+    comp = repo_company(con)
+    data = {
+        "number": receipt_number(con, pay),
+        "payment": pay,
+        "invoice": inv,
+        "company": comp,
+        "recipient": recipient,
+        "payer": payer,
+        "paid_before_cents": before,
+        "open_after_cents": int(inv["total_gross_cents"]) + fees_cents(con, inv["id"]) - before - pay["amount_cents"],
+        "kleinunternehmer": inv.get("tax_mode", "kleinunternehmer") != "regel",
+        "logo": comp.get("logo", ""),
+    }
+    try:
+        pdf_writer(data, path)
+        h = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        with transaction(con):
+            audit.log(con, "receipt", "document", inv["id"], {"payment_id": payment_id, "number": data["number"],
+                                                            "cents": pay["amount_cents"], "pdf_sha256": h})
+    except BaseException:
+        Path(path).unlink(missing_ok=True)
+        raise
+    try:
+        path.chmod(0o444)  # schreibgeschützt wie das Beleg-Archiv
+    except OSError:
+        pass
+    return path
+
+
 def open_items(con: sqlite3.Connection) -> list[dict]:
     items = [d for d in documents.list_documents(con, ("rechnung",)) if d["status"] == "festgeschrieben" and d["open_cents"] != 0]
     today = date.today()
