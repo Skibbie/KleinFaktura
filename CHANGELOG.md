@@ -5,6 +5,8 @@ automatisch als Beschreibung übernommen. Neue Einträge zuerst unter `## [Unver
 
 ## [Unveröffentlicht]
 
+## [2.4.1] – 2026-11-22
+
 - Einrichtungsassistent und Einstellungen prüfen PLZ, IBAN (Länge und Prüfziffer), BIC und E-Mail; die IBAN wird
   einheitlich in Vierergruppen gespeichert
 - Assistent: Optionsfelder für Branche und Besteuerung wieder rund, Seite mit Überschriften „Branche“ und „Besteuerung“
