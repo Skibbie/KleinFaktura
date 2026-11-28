@@ -39,8 +39,8 @@ Beim ersten Wählen eines Profils kommen dessen Startwerte dazu. Ein Wechsel lö
 | Bereich | Inhalt |
 |---|---|
 | Kunden | manuell anlegen/bearbeiten, Projekte/Objektadressen je Kunde, Import aus CSV/Excel (bei Energieberatung zusätzlich aus Hottgenroth, nur lesend) – mit Kollisionsdialog (Feldvergleich, lokal behalten / übernehmen / zusammenführen / neu / überspringen) |
-| Angebote | `ANJJJJ-MMNN`, Gültigkeit, „In Rechnung umwandeln“ |
-| Rechnungen | `JJJJ-MMNN` (Zähler je Monat), Nummer erst beim Festschreiben, Pflichtangabenprüfung § 14 UStG, PDF mit eigenem Logo, GiroCode, optional ZUGFeRD (EN 16931, PDF/A-3) |
+| Angebote | Nummer standardmäßig `ANJJJJ-MMNN` (einstellbar), Gültigkeit, „In Rechnung umwandeln“ |
+| Rechnungen | Nummer standardmäßig `JJJJ-MMNN` (Zähler je Monat); Präfix, Jahr, Monat, Trennzeichen und Stellen einstellbar, z.B. `RE-2026-0001` (Zähler je Jahr) oder fortlaufend `000123`; Nummer erst beim Festschreiben, Pflichtangabenprüfung § 14 UStG, PDF mit eigenem Logo, GiroCode, optional ZUGFeRD (EN 16931, PDF/A-3) |
 | Versand & Ablage | „Per E-Mail“ öffnet Thunderbird mit vorbereiteter Mail (Empfänger aus dem Kunden, Betreff und Text als Vorlage) und dem PDF als Anhang – gesendet wird erst in Thunderbird; optional nach dem Festschreiben eine PDF-Kopie in einen Wunschordner (auf Wunsch je Jahr) |
 | Storno | Stornorechnung mit eigener Nummer und Verweis; festgeschriebene Belege sind unveränderbar |
 | Offene Posten | Teilzahlungen, Überfälligkeit, Zahlungserinnerung / 1. / 2. Mahnung mit Gebühren und GiroCode |
@@ -63,6 +63,12 @@ Beim ersten Wählen eines Profils kommen dessen Startwerte dazu. Ein Wechsel lö
 `{briefanrede} {kunde} {faellig} {zahlungsziel} {iban} {bic} {belegnr} {betrag} {gueltig_bis} {datum}
 {leistungsdatum} {inhaber} {firma} {objekt_adresse} {projekt} {ref_belegnr} {ref_datum}` –
 in E-Mail-Vorlagen zusätzlich `{belegart} {betreff}`, in Mahnungen zusätzlich `{offen} {gebuehr} {gesamt} {neu_faellig} {rechnungsnr} {rechnungsdatum}`.
+
+Im Programm muss man sie nicht auswendig kennen: Wer in einem Textfeld `{` tippt, bekommt eine Auswahlliste mit
+Erklärung (im Beleg auch mit dem aktuellen Wert); weitertippen filtert, Enter oder Tab setzt ein. Der Knopf
+„Platzhalter…“ (unter Textbausteine, im Beleg und bei den E-Mail-Vorlagen) zeigt alle Platzhalter als durchsuchbare
+Übersicht und fügt den gewählten an der Cursorposition ein. Das Verzeichnis steht in
+`app/services/placeholder_catalog.py`; ein Test prüft, dass es zu den tatsächlich ersetzten Werten passt.
 
 ## Hinweise
 - **Regelbesteuerung ist eingeschränkt**: Rechnungen mit Umsatzsteuer (7 %/19 %, auch als E-Rechnung) werden

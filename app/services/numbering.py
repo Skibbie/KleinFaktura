@@ -1,7 +1,9 @@
 """Nummernkreise.
 
-Rechnung (und Storno): JJJJ-MMNN, z.B. 2026-1001 – Zähler startet jeden Monat bei 01.
-Angebot:              ANJJJJ-MMNN, z.B. AN2026-1001.
+Aufbau je Kreis (Einstellungen → Nummernkreise, „Baukasten“):
+    Präfix + Jahr (4-/2-stellig/ohne) + Trennzeichen + Monat (optional) + Zähler (Stellen einstellbar)
+Standard Rechnung (und Storno): JJJJ-MMNN, z.B. 2026-1001; Angebot: ANJJJJ-MMNN, z.B. AN2026-1001.
+Der Zähler beginnt je Monat neu (mit Monat), je Jahr (nur Jahr) oder läuft durch (ohne Jahr).
 Die Vergabe erfolgt erst beim Festschreiben innerhalb der Festschreibe-Transaktion,
 damit keine Lücken durch verworfene Entwürfe entstehen.
 """
@@ -9,66 +11,136 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from dataclasses import dataclass
 from datetime import date
 
-from app.db.database import get_int_setting, get_setting
+from app.db.database import get_setting
 
 RANGE_FOR_TYPE = {"rechnung": "rechnung", "storno": "rechnung", "angebot": "angebot"}
+_KEY = {"rechnung": "invoice", "angebot": "offer"}
+SEPARATORS = {"-": "Bindestrich (-)", "_": "Unterstrich (_)", ".": "Punkt (.)", "": "keins"}
+PREFIX_RE = re.compile(r"^[A-Za-z0-9ÄÖÜäöüß_.-]{0,10}$")
+MIN_DIGITS, MAX_DIGITS = 1, 8
+CONTINUOUS = "*"   # Periode für Kreise ohne Jahr: Zähler läuft immer weiter
 
 
-def _prefix(con, rng: str) -> str:
-    key = "number.offer_prefix" if rng == "angebot" else "number.invoice_prefix"
-    return get_setting(con, key)
+@dataclass(frozen=True)
+class NumberFormat:
+    prefix: str = ""
+    year: int = 4          # 4, 2 oder 0 (ohne Jahr)
+    month: bool = True     # nur mit Jahr
+    sep: str = "-"
+    digits: int = 2
+
+    def __post_init__(self):
+        if self.year not in (0, 2, 4):
+            raise ValueError("Jahr muss 4-stellig, 2-stellig oder ohne sein.")
+        if self.month and not self.year:
+            raise ValueError("Ein Monat ist nur zusammen mit dem Jahr möglich.")
+        if self.sep not in SEPARATORS:
+            raise ValueError(f"Unzulässiges Trennzeichen „{self.sep}“.")
+        if not PREFIX_RE.match(self.prefix):
+            raise ValueError("Präfix: höchstens 10 Zeichen, nur Buchstaben, Ziffern, - _ und Punkt "
+                             "(die Nummer wird auch Dateiname).")
+        if not MIN_DIGITS <= self.digits <= MAX_DIGITS:
+            raise ValueError(f"Stellen des Zählers: {MIN_DIGITS} bis {MAX_DIGITS}.")
+
+    @property
+    def reset(self) -> str:
+        return "monat" if self.month else "jahr" if self.year else "nie"
+
+    def period(self, on: date) -> str:
+        if self.month:
+            return f"{on.year:04d}{on.month:02d}"
+        return f"{on.year:04d}" if self.year else CONTINUOUS
+
+    def render(self, on: date, counter: int) -> str:
+        y = f"{on.year:04d}" if self.year == 4 else f"{on.year % 100:02d}" if self.year == 2 else ""
+        m = f"{on.month:02d}" if self.month else ""
+        return f"{self.prefix}{y}{self.sep if y else ''}{m}{counter:0{self.digits}d}"
+
+    def pattern(self) -> str:
+        """Schema in Worten, z.B. „RE-JJJJ-NNNN“."""
+        y = "J" * self.year
+        return f"{self.prefix}{y}{self.sep if y else ''}{'MM' if self.month else ''}{'N' * self.digits}"
+
+    def regex(self) -> re.Pattern:
+        y = rf"(\d{{{self.year}}})" if self.year else "()"
+        sep = re.escape(self.sep) if self.year else ""
+        m = r"(\d{2})" if self.month else "()"
+        return re.compile(rf"^{re.escape(self.prefix)}{y}{sep}{m}(\d{{{self.digits},}})$")
+
+    def describe_reset(self) -> str:
+        return {"monat": "Zähler beginnt jeden Monat neu", "jahr": "Zähler beginnt jedes Jahr neu",
+                "nie": "Zähler läuft fortlaufend weiter (kein Neustart)"}[self.reset]
 
 
-def _digits(con) -> int:
-    return max(2, get_int_setting(con, "number.digits", "2"))
+def setting_keys(rng: str) -> dict[str, str]:
+    k = _KEY[rng]
+    return {"prefix": f"number.{k}_prefix", "year": f"number.{k}_year", "month": f"number.{k}_month",
+            "sep": f"number.{k}_sep", "digits": f"number.{k}_digits"}
 
 
-def format_number(prefix: str, year: int, month: int, counter: int, digits: int = 2) -> str:
-    return f"{prefix}{year:04d}-{month:02d}{counter:0{digits}d}"
-
-
-def number_regex(prefix: str) -> re.Pattern:
-    return re.compile(rf"^{re.escape(prefix)}(\d{{4}})-(\d{{2}})(\d{{2,}})$")
-
-
-def parse_number(con, number: str, doc_type: str) -> tuple[int, int, int] | None:
-    """Zerlegt eine Nummer im Schema -> (Jahr, Monat, Zähler) oder None."""
+def get_format(con: sqlite3.Connection, doc_type: str) -> NumberFormat:
     rng = RANGE_FOR_TYPE[doc_type]
-    m = number_regex(_prefix(con, rng)).match(number.strip())
+    k = setting_keys(rng)
+    # Stellen hießen früher gemeinsam „number.digits“; der Wert gilt weiter, bis je Kreis etwas eingestellt ist
+    digits = get_setting(con, k["digits"]) or get_setting(con, "number.digits", "2")
+    try:
+        return NumberFormat(prefix=get_setting(con, k["prefix"]), year=int(get_setting(con, k["year"], "4")),
+                            month=get_setting(con, k["month"], "1") == "1", sep=get_setting(con, k["sep"], "-"),
+                            digits=int(digits))
+    except ValueError:
+        # beschädigte Einstellung: lieber das bewährte Standardschema als gar keine Nummer
+        return NumberFormat(prefix=get_setting(con, k["prefix"]) if PREFIX_RE.match(get_setting(con, k["prefix"])) else "")
+
+
+def format_values(fmt: NumberFormat) -> dict[str, str]:
+    """Einstellungswerte (für set_setting) zu einem Format."""
+    return {"prefix": fmt.prefix, "year": str(fmt.year), "month": "1" if fmt.month else "0", "sep": fmt.sep,
+            "digits": str(fmt.digits)}
+
+
+def parse_number(con, number: str, doc_type: str) -> tuple[str, int] | None:
+    """Zerlegt eine Nummer im eingestellten Schema -> (Periode, Zähler) oder None."""
+    fmt = get_format(con, doc_type)
+    m = fmt.regex().match(number.strip())
     if not m:
         return None
-    year, month, counter = int(m[1]), int(m[2]), int(m[3])
+    if not fmt.year:
+        return CONTINUOUS, int(m[3])
+    year = int(m[1]) + (2000 if fmt.year == 2 else 0)
+    month = int(m[2]) if fmt.month else 1
     if not 1 <= month <= 12:
         return None
-    return year, month, counter
+    return fmt.period(date(year, month, 1)), int(m[3])
 
 
-def peek_next(con: sqlite3.Connection, doc_type: str, on: date | None = None) -> str:
-    on = on or date.today()
-    rng = RANGE_FOR_TYPE[doc_type]
-    period = f"{on.year:04d}{on.month:02d}"
+def _last(con, rng: str, period: str) -> int:
     row = con.execute("SELECT last_value FROM number_range WHERE doc_type=? AND period=?", (rng, period)).fetchone()
-    last = row[0] if row else 0
-    return format_number(_prefix(con, rng), on.year, on.month, last + 1, _digits(con))
+    return row[0] if row else 0
+
+
+def peek_next(con: sqlite3.Connection, doc_type: str, on: date | None = None, fmt: NumberFormat | None = None) -> str:
+    """Voraussichtlich nächste Nummer; `fmt` für die Vorschau eines noch nicht gespeicherten Schemas."""
+    on = on or date.today()
+    fmt = fmt or get_format(con, doc_type)
+    return fmt.render(on, _last(con, RANGE_FOR_TYPE[doc_type], fmt.period(on)) + 1)
 
 
 def allocate(con: sqlite3.Connection, doc_type: str, on: date) -> str:
     """Muss innerhalb einer Transaktion aufgerufen werden."""
     assert con.in_transaction, "Nummernvergabe nur innerhalb einer Transaktion"
     rng = RANGE_FOR_TYPE[doc_type]
-    period = f"{on.year:04d}{on.month:02d}"
-    prefix = _prefix(con, rng)
-    digits = _digits(con)
+    fmt = get_format(con, doc_type)
+    period = fmt.period(on)
     con.execute("INSERT OR IGNORE INTO number_range(doc_type, period, last_value) VALUES (?,?,0)", (rng, period))
-    last = con.execute("SELECT last_value FROM number_range WHERE doc_type=? AND period=?", (rng, period)).fetchone()[0]
-    nxt = last + 1
-    # Sicherheitsnetz: falls die Nummer (z.B. durch Import) schon existiert, weiterzählen
-    while con.execute("SELECT 1 FROM document WHERE number=?", (format_number(prefix, on.year, on.month, nxt, digits),)).fetchone():
+    nxt = _last(con, rng, period) + 1
+    # Sicherheitsnetz: falls die Nummer (z.B. durch Import oder ein früheres Schema) schon existiert, weiterzählen
+    while con.execute("SELECT 1 FROM document WHERE number=?", (fmt.render(on, nxt),)).fetchone():
         nxt += 1
     con.execute("UPDATE number_range SET last_value=? WHERE doc_type=? AND period=?", (nxt, rng, period))
-    return format_number(prefix, on.year, on.month, nxt, digits)
+    return fmt.render(on, nxt)
 
 
 def reserve(con: sqlite3.Connection, doc_type: str, number: str) -> bool:
@@ -76,9 +148,8 @@ def reserve(con: sqlite3.Connection, doc_type: str, number: str) -> bool:
     parsed = parse_number(con, number, doc_type)
     if not parsed:
         return False
-    year, month, counter = parsed
+    period, counter = parsed
     rng = RANGE_FOR_TYPE[doc_type]
-    period = f"{year:04d}{month:02d}"
     con.execute("INSERT OR IGNORE INTO number_range(doc_type, period, last_value) VALUES (?,?,0)", (rng, period))
     con.execute(
         "UPDATE number_range SET last_value=? WHERE doc_type=? AND period=? AND last_value < ?",
@@ -87,9 +158,14 @@ def reserve(con: sqlite3.Connection, doc_type: str, number: str) -> bool:
     return True
 
 
-def set_start(con: sqlite3.Connection, doc_type: str, year: int, month: int, last_value: int) -> None:
-    """Startwert setzen (nur erhöhen erlaubt, Trigger verhindert Zurücksetzen)."""
+def last_value(con: sqlite3.Connection, doc_type: str, on: date) -> int:
+    """Zuletzt vergebener Zähler im Zeitraum von `on` (nach eingestelltem Schema)."""
+    return _last(con, RANGE_FOR_TYPE[doc_type], get_format(con, doc_type).period(on))
+
+
+def set_start(con: sqlite3.Connection, doc_type: str, on: date, last_value: int) -> None:
+    """Startwert für den Zeitraum von `on` setzen (nur erhöhen erlaubt, Trigger verhindert Zurücksetzen)."""
     rng = RANGE_FOR_TYPE[doc_type]
-    period = f"{year:04d}{month:02d}"
+    period = get_format(con, doc_type).period(on)
     con.execute("INSERT OR IGNORE INTO number_range(doc_type, period, last_value) VALUES (?,?,0)", (rng, period))
     con.execute("UPDATE number_range SET last_value=? WHERE doc_type=? AND period=?", (last_value, rng, period))

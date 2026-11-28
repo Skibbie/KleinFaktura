@@ -276,6 +276,26 @@ def remember_text(con: sqlite3.Connection, category: str, text: str) -> bool:
     return True
 
 
+def set_default_text(con: sqlite3.Connection, category: str, text: str) -> bool:
+    """Text zum Standard der Kategorie machen (vorhandenen gleichen Baustein markieren, sonst neu anlegen).
+    Beim Schlusstext wird die angehängte Grußformel abgetrennt – neue Belege hängen sie selbst an."""
+    text = (text or "").strip()
+    if category in ("fuss_rechnung", "fuss_angebot"):
+        gruss = default_text(con, "gruss").strip()
+        if gruss and text.endswith(gruss):
+            text = text[:-len(gruss)].rstrip()
+    if not text:
+        return False
+    same = [tb for tb in list_textblocks(con, category) if (tb["body"] or "").strip().casefold() == text.casefold()]
+    if same:
+        save_textblock(con, {**same[0], "is_default": True})
+    else:
+        title = text.splitlines()[0]
+        save_textblock(con, {"category": category, "title": title[:60] + ("…" if len(title) > 60 else ""), "body": text,
+                             "is_default": True})
+    return True
+
+
 def text_choices(con: sqlite3.Connection, category: str) -> list[str]:
     """Texte einer Kategorie zur Auswahl in Eingabefeldern."""
     return [tb["body"] for tb in list_textblocks(con, category) if (tb["body"] or "").strip()]

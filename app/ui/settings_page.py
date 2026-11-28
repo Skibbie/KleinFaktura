@@ -11,9 +11,9 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, Q
 from app import config
 from app.db.database import PROFILES, apply_profile, get_setting, set_setting, transaction
 from app.money import input_decimal
-from app.services import audit, backup, kleinunternehmer, mail, numbering, secret
+from app.services import audit, backup, kleinunternehmer, mail, numbering, placeholder_catalog, secret
 from app.validation import company_problems, normalize_company
-from app.ui import update_ui
+from app.ui import placeholders_ui, update_ui
 from app.ui.common import CANCEL, SAVE, Ctx, ask_save, button, confirm, error, hbox, page_title
 
 COMPANY_FIELDS = [
@@ -41,6 +41,75 @@ NUMERIC_FIELDS = {
     "backup.keep_daily": ("Tägliche Sicherungen behalten", "int", 1),
     "backup.keep_monthly": ("Monatliche Sicherungen behalten", "int", 0),
 }
+
+
+class NumberFormatBox(QGroupBox):
+    """Baukasten für einen Nummernkreis mit Vorschau der nächsten Nummer."""
+
+    def __init__(self, ctx: Ctx, doc_type: str, title: str):
+        super().__init__(title)
+        self.ctx, self.doc_type = ctx, doc_type
+        f = QFormLayout(self)
+        self.prefix = QLineEdit()
+        self.prefix.setMaxLength(10)
+        self.prefix.setPlaceholderText("leer oder z.B. RE-")
+        self.prefix.setToolTip("Steht vor der Nummer, z.B. RE- oder AN. Erlaubt: Buchstaben, Ziffern, - _ .")
+        self.year = QComboBox()
+        for label, v in [("4-stellig (2026)", 4), ("2-stellig (26)", 2), ("ohne Jahr", 0)]:
+            self.year.addItem(label, v)
+        self.month = QCheckBox("mit Monat (Zähler beginnt jeden Monat neu)")
+        self.sep = QComboBox()
+        for v, label in numbering.SEPARATORS.items():
+            self.sep.addItem(label, v)
+        self.sep.setToolTip("Steht zwischen Jahr und Monat bzw. Zähler")
+        self.digits = QSpinBox()
+        self.digits.setRange(numbering.MIN_DIGITS, numbering.MAX_DIGITS)
+        self.digits.setToolTip("Mindestanzahl Stellen des Zählers, mit führenden Nullen aufgefüllt")
+        self.preview = QLabel()
+        self.preview.setTextFormat(Qt.RichText)
+        f.addRow("Präfix", self.prefix)
+        f.addRow("Jahr", hbox(self.year, self.month, None))
+        f.addRow("Trennzeichen", hbox(self.sep, QLabel("Stellen des Zählers"), self.digits, None))
+        f.addRow("Nächste Nummer", self.preview)
+        self.load()
+        self.prefix.textChanged.connect(self._update)
+        self.year.currentIndexChanged.connect(self._update)
+        self.month.toggled.connect(self._update)
+        self.sep.currentIndexChanged.connect(self._update)
+        self.digits.valueChanged.connect(self._update)
+
+    def load(self) -> None:
+        fmt = numbering.get_format(self.ctx.con, self.doc_type)
+        self.prefix.setText(fmt.prefix)
+        self.year.setCurrentIndex(self.year.findData(fmt.year))
+        self.month.setChecked(fmt.month)
+        self.sep.setCurrentIndex(self.sep.findData(fmt.sep))
+        self.digits.setValue(fmt.digits)
+        self._update()
+
+    def fmt(self) -> numbering.NumberFormat:
+        """Eingestelltes Schema; ValueError mit verständlicher Meldung bei ungültigem Präfix."""
+        year = self.year.currentData()
+        return numbering.NumberFormat(prefix=self.prefix.text().strip(), year=year, month=self.month.isChecked() and year > 0,
+                                      sep=self.sep.currentData(), digits=self.digits.value())
+
+    def state(self) -> tuple:
+        return (self.prefix.text(), self.year.currentIndex(), self.month.isChecked(), self.sep.currentIndex(),
+                self.digits.value())
+
+    def _update(self, *_):
+        has_year = self.year.currentData() > 0
+        if not has_year:
+            self.month.setChecked(False)   # nicht angehakt stehen lassen, was nicht wirkt
+        self.month.setEnabled(has_year)    # Monat ohne Jahr ergäbe sich wiederholende Nummern
+        self.sep.setEnabled(has_year)
+        try:
+            fmt = self.fmt()
+        except ValueError as e:
+            self.preview.setText(f"<span style='color:#B00020'>{e}</span>")
+            return
+        nxt = numbering.peek_next(self.ctx.con, self.doc_type, fmt=fmt)
+        self.preview.setText(f"<b>{nxt}</b> &nbsp;·&nbsp; Schema {fmt.pattern()} &nbsp;·&nbsp; {fmt.describe_reset()}")
 
 
 SECRET_KEYS = {"backup.password"}
@@ -129,6 +198,40 @@ class SettingsPage(QWidget):
         f.addRow("", self.zugferd)
         lay.addWidget(g)
 
+        g = QGroupBox("Nummernkreise")
+        f = QFormLayout(g)
+        hint = QLabel("Aufbau: Präfix + Jahr + Trennzeichen + Monat + Zähler. Stornorechnungen laufen im Rechnungskreis. "
+                      "Ein geändertes Schema gilt für neu festgeschriebene Belege; vergebene Nummern bleiben, "
+                      "doppelte Nummern sind ausgeschlossen.")
+        hint.setWordWrap(True)
+        f.addRow(hint)
+        self.nr_formats = {"rechnung": NumberFormatBox(ctx, "rechnung", "Rechnungen"),
+                           "angebot": NumberFormatBox(ctx, "angebot", "Angebote")}
+        for box in self.nr_formats.values():
+            f.addRow(box)
+        self.nr_type = QComboBox()
+        self.nr_type.addItem("Rechnungen", "rechnung")
+        self.nr_type.addItem("Angebote", "angebot")
+        self.nr_year = QSpinBox()
+        self.nr_year.setRange(2000, 2100)
+        self.nr_year.setValue(date.today().year)
+        self.nr_month = QSpinBox()
+        self.nr_month.setRange(1, 12)
+        self.nr_month.setValue(date.today().month)
+        self.nr_last = QSpinBox()
+        self.nr_last.setRange(0, 10 ** numbering.MAX_DIGITS - 1)
+        self.nr_year_label, self.nr_month_label = QLabel("Jahr"), QLabel("Monat")
+        row = QHBoxLayout()
+        for w in (self.nr_type, self.nr_year_label, self.nr_year, self.nr_month_label, self.nr_month,
+                  QLabel("zuletzt vergebene Nr."), self.nr_last, button("Startwert setzen", self.set_start)):
+            row.addWidget(w)
+        row.addStretch(1)
+        f.addRow("Startwert", row)
+        lay.addWidget(g)
+        # erst nach dem Einbau: setVisible an Widgets ohne Eltern öffnete sie kurz als eigene Fenster
+        self.nr_type.currentIndexChanged.connect(self._update_start_fields)
+        self._update_start_fields()
+
         lay = self._tab("E-Mail und PDF")
         g = QGroupBox("E-Mail && PDF-Ablage")   # && = sichtbares &
         f = QFormLayout(g)
@@ -144,11 +247,16 @@ class SettingsPage(QWidget):
             t.setFixedHeight(150)
             self.texts[key] = t
             f.addRow(label, t)
-        ph = QLabel("Platzhalter: {briefanrede} {belegart} {belegnr} {datum} {betrag} {faellig} {gueltig_bis} "
-                    "{betreff} {projekt} {objekt_adresse} {kunde} {inhaber} {firma}. Die Mail wird nur vorbereitet – "
-                    "gesendet wird erst in Thunderbird.")
+        ph = QLabel("Platzhalter wie {belegnr} oder {betrag} werden ersetzt – im Feld „{“ tippen öffnet eine Auswahl. "
+                    "Die Mail wird nur vorbereitet – gesendet wird erst in Thunderbird.")
         ph.setWordWrap(True)
-        f.addRow(ph)
+        f.addRow(hbox(ph, button("Platzhalter…", self.show_mail_placeholders,
+                                 tooltip="Übersicht der Platzhalter für E-Mails – „Einfügen“ ins zuletzt benutzte Feld")))
+        self._mail_target = self.texts["mail.body_rechnung"]
+        for w in (self.edits["mail.subject_rechnung"], self.edits["mail.subject_angebot"],
+                  self.texts["mail.body_rechnung"], self.texts["mail.body_angebot"]):
+            placeholders_ui.attach(w, lambda: placeholder_catalog.for_context("mail"),
+                                   on_focus=lambda edit: setattr(self, "_mail_target", edit))
         self.checks["pdf.export_auto"] = QCheckBox("PDF nach dem Festschreiben zusätzlich in diesen Ordner kopieren")
         self.checks["pdf.export_year_dirs"] = QCheckBox("Unterordner je Jahr anlegen")
         f.addRow("", self.checks["pdf.export_auto"])
@@ -157,31 +265,6 @@ class SettingsPage(QWidget):
         f.addRow("", self.checks["pdf.export_year_dirs"])
         for key, cb in self.checks.items():
             cb.setChecked(get_setting(ctx.con, key) == "1")
-        lay.addWidget(g)
-
-        g = QGroupBox("Nummernkreise")
-        f = QFormLayout(g)
-        f.addRow(QLabel("Rechnungen: JJJJ-MMNN (z.B. 2026-1001) · Angebote: ANJJJJ-MMNN (z.B. AN2026-1001) · "
-                        "Zähler beginnt jeden Monat neu. Stornorechnungen laufen im Rechnungskreis."))
-        f.addRow("Nächste Rechnungsnummer", QLabel(numbering.peek_next(ctx.con, "rechnung")))
-        f.addRow("Nächste Angebotsnummer", QLabel(numbering.peek_next(ctx.con, "angebot")))
-        self.nr_type = QComboBox()
-        self.nr_type.addItem("Rechnungen", "rechnung")
-        self.nr_type.addItem("Angebote", "angebot")
-        self.nr_year = QSpinBox()
-        self.nr_year.setRange(2000, 2100)
-        self.nr_year.setValue(date.today().year)
-        self.nr_month = QSpinBox()
-        self.nr_month.setRange(1, 12)
-        self.nr_month.setValue(date.today().month)
-        self.nr_last = QSpinBox()
-        self.nr_last.setRange(0, 9999)
-        row = QHBoxLayout()
-        for w in (self.nr_type, QLabel("Jahr"), self.nr_year, QLabel("Monat"), self.nr_month,
-                  QLabel("zuletzt vergebene Nr."), self.nr_last, button("Startwert setzen", self.set_start)):
-            row.addWidget(w)
-        row.addStretch(1)
-        f.addRow("Startwert", row)
         lay.addWidget(g)
 
         g = QGroupBox("Mahnwesen")
@@ -280,7 +363,8 @@ class SettingsPage(QWidget):
     def _snapshot(self):
         return ({k: e.text() for k, e in self.edits.items()}, {k: t.toPlainText() for k, t in self.texts.items()},
                 {k: c.isChecked() for k, c in self.checks.items()}, self.profile.currentIndex(), self.tax_mode.currentIndex(), self.ku_basis.currentIndex(),
-                self.girocode.isChecked(), self.zugferd.isChecked(), self.update_check.isChecked())
+                self.girocode.isChecked(), self.zugferd.isChecked(), self.update_check.isChecked(),
+                tuple(b.state() for b in self.nr_formats.values()))
 
     def _reload_values(self):
         for key, e in self.edits.items():
@@ -295,6 +379,8 @@ class SettingsPage(QWidget):
         self.girocode.setChecked(get_setting(self.ctx.con, "invoice.girocode") == "1")
         self.zugferd.setChecked(get_setting(self.ctx.con, "invoice.zugferd_default") == "1")
         self.update_check.setChecked(get_setting(self.ctx.con, update_ui.CHECK_SETTING, "1") == "1")
+        for box in self.nr_formats.values():
+            box.load()
         self._clean = self._snapshot()
 
     def _stored(self, key: str) -> str:
@@ -356,6 +442,10 @@ class SettingsPage(QWidget):
         self._tab_layouts.append(lay)
         return lay
 
+    def show_mail_placeholders(self):
+        placeholders_ui.PlaceholderDialog(self, placeholder_catalog.for_context("mail"), self._mail_target,
+                                          title="Platzhalter für E-Mails").exec()
+
     def _update_cloud_hint(self, *_):
         """Hinweis, wenn der Sicherungsordner von einem Cloud-Dienst synchronisiert wird und nicht verschlüsselt ist."""
         path = self.edits["backup.dir"].text().lower()
@@ -415,9 +505,42 @@ class SettingsPage(QWidget):
                 self.edits[key].setText(v)
         return True
 
+    def _number_format_values(self) -> list[tuple[str, str]] | None:
+        """Nummernschemata prüfen und ein geändertes Schema bestätigen lassen. Rückgabe: Einstellungswerte oder None."""
+        values, problems, changed = [], [], []
+        for doc_type, box in self.nr_formats.items():
+            try:
+                fmt = box.fmt()
+            except ValueError as e:
+                problems.append(f"Nummernkreis {box.title()}: {e}")
+                continue
+            keys = numbering.setting_keys(doc_type)
+            values += [(keys[k], v) for k, v in numbering.format_values(fmt).items()]
+            if fmt != numbering.get_format(self.ctx.con, doc_type):
+                changed.append(f"{box.title()}: {numbering.peek_next(self.ctx.con, doc_type)} → "
+                               f"{numbering.peek_next(self.ctx.con, doc_type, fmt=fmt)} ({fmt.describe_reset()})")
+        if problems:
+            QMessageBox.warning(self, "Einstellungen", "Bitte korrigieren:\n\n• " + "\n• ".join(problems))
+            return None
+        if changed and not confirm(self, "Nummernkreise", "Neues Nummernschema für künftig festgeschriebene Belege:\n\n• "
+                                   + "\n• ".join(changed) + "\n\nBereits vergebene Nummern bleiben unverändert. Übernehmen?"):
+            return None
+        return values
+
+    def _update_start_fields(self, *_):
+        """Nur die Felder zeigen, nach denen der Zähler des Kreises neu beginnt (Monat / Jahr / gar nicht)."""
+        fmt = numbering.get_format(self.ctx.con, self.nr_type.currentData())
+        for w in (self.nr_year_label, self.nr_year):
+            w.setVisible(fmt.year > 0)
+        for w in (self.nr_month_label, self.nr_month):
+            w.setVisible(fmt.month)
+
     def save(self, quiet: bool = False) -> bool:
         numbers = self._normalized_numbers()
         if numbers is None or not self._folders_ok() or not self._company_ok():
+            return False
+        number_formats = self._number_format_values()
+        if number_formats is None:
             return False
         if self.checks["backup.encrypt"].isChecked() and len(self.edits["backup.password"].text()) < 8:
             QMessageBox.warning(self, "Einstellungen", "Für verschlüsselte Sicherungen bitte ein Passwort mit "
@@ -441,6 +564,7 @@ class SettingsPage(QWidget):
                 set_setting(self.ctx.con, key, v)
             values = [(k, t.toPlainText().strip()) for k, t in self.texts.items()]
             values += [(k, "1" if c.isChecked() else "0") for k, c in self.checks.items()]
+            values += number_formats
             for key, v in values + [("tax.mode", self.tax_mode.currentData()), ("ku.basis", self.ku_basis.currentData()),
                            ("invoice.girocode", "1" if self.girocode.isChecked() else "0"),
                            ("invoice.zugferd_default", "1" if self.zugferd.isChecked() else "0"),
@@ -453,6 +577,9 @@ class SettingsPage(QWidget):
                 apply_profile(self.ctx.con, self.profile.currentData())
             if changes:
                 audit.log(self.ctx.con, "settings", "settings", None, changes)
+        for box in self.nr_formats.values():
+            box.load()
+        self._update_start_fields()
         self._clean = self._snapshot()
         self.ctx.changed()
         if not quiet:
@@ -460,17 +587,34 @@ class SettingsPage(QWidget):
         return True
 
     def set_start(self):
-        t, y, m, v = self.nr_type.currentData(), self.nr_year.value(), self.nr_month.value(), self.nr_last.value()
-        prefix = get_setting(self.ctx.con, "number.offer_prefix" if t == "angebot" else "number.invoice_prefix")
-        nxt = numbering.format_number(prefix, y, m, v + 1)
-        if not confirm(self, "Startwert", f"Zuletzt vergebene Nummer für {m:02d}/{y} auf {v} setzen?\n"
+        t, v = self.nr_type.currentData(), self.nr_last.value()
+        try:
+            edited = self.nr_formats[t].fmt() != numbering.get_format(self.ctx.con, t)
+        except ValueError:
+            edited = True
+        if edited:
+            QMessageBox.information(self, "Startwert", "Das Nummernschema wurde geändert – bitte zuerst die "
+                                                       "Einstellungen speichern, dann den Startwert setzen.")
+            return
+        fmt = numbering.get_format(self.ctx.con, t)
+        on = date(self.nr_year.value(), self.nr_month.value() if fmt.month else 1, 1)
+        nxt = fmt.render(on, v + 1)
+        scope = {"monat": f" für {on.month:02d}/{on.year}", "jahr": f" für {on.year}", "nie": ""}[fmt.reset]
+        if v < numbering.last_value(self.ctx.con, t, on):
+            QMessageBox.information(self, "Startwert", f"Zuletzt vergeben{scope} ist bereits "
+                                                       f"{numbering.last_value(self.ctx.con, t, on)} – der Zähler kann "
+                                                       "nicht verringert werden.")
+            return
+        if not confirm(self, "Startwert", f"Zuletzt vergebene Nummer{scope} auf {v} setzen?\n"
                                           f"Nächste Nummer wird {nxt}.\n\nDer Zähler kann danach nicht verringert werden."):
             return
         try:
             with transaction(self.ctx.con):
-                numbering.set_start(self.ctx.con, t, y, m, v)
-                audit.log(self.ctx.con, "number_start", "number_range", None, {"type": t, "period": f"{y}{m:02d}", "last": v})
+                numbering.set_start(self.ctx.con, t, on, v)
+                audit.log(self.ctx.con, "number_start", "number_range", None,
+                          {"type": t, "period": fmt.period(on), "last": v})
         except Exception as e:  # noqa: BLE001
             error(self, "Startwert", e)
             return
+        self.nr_formats[t].load()   # Vorschau „Nächste Nummer“ aktualisieren
         QMessageBox.information(self, "Startwert", f"Gesetzt. Nächste Nummer: {nxt}")

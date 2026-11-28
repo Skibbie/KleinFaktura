@@ -13,11 +13,12 @@ from app import config
 from app.db import repo
 from app.db.database import get_decimal_setting, get_int_setting, get_setting
 from app.money import fmt_eur, fmt_qty, input_cents, input_decimal, line_total_cents
-from app.services import documents, kleinunternehmer, numbering
+from app.services import documents, kleinunternehmer, numbering, placeholder_catalog
 from app.ui.article_dialogs import ArticlePickerDialog
 from app.ui.common import CANCEL, SAVE, Ctx, ask_save, button, confirm, date_edit, date_value, error, hbox, open_file, set_date
 from app.ui.customers import CustomerDialog, CustomerPicker, ProjectDialog
-from app.ui.mail_ui import ask_send_after_finalize, export_after_finalize, send_mail
+from app.ui.mail_ui import ask_after_finalize, export_after_finalize, send_mail
+from app.ui import placeholders_ui
 
 COL_TITLE, COL_QTY, COL_UNIT, COL_PRICE, COL_TAX, COL_TOTAL = range(6)
 
@@ -73,7 +74,8 @@ class TextPicker(QDialog):
 class TextField(QWidget):
     """Mehrzeiliges Textfeld mit Textbaustein-Knopf."""
 
-    def __init__(self, ctx: Ctx, categories: list[str], height: int = 60, remember: bool = True):
+    def __init__(self, ctx: Ctx, categories: list[str], height: int = 60, remember: bool = True,
+                 can_default: bool = False):
         super().__init__()
         self.ctx, self.categories = ctx, categories
         outer = QVBoxLayout(self)
@@ -89,9 +91,19 @@ class TextField(QWidget):
         self.remember = QCheckBox("In Textbausteine übernehmen")
         self.remember.setToolTip("Geänderter Text wird beim Speichern als Textbaustein angelegt, falls es ihn noch nicht gibt")
         self.remember.setChecked(get_setting(ctx.con, "textblock.remember_default", "1") == "1")
-        outer.addWidget(self.remember)
+        # einmalige Aktion beim Speichern, daher nie vorbelegt
+        self.as_default = QCheckBox("Als Standard setzen")
+        self.as_default.setToolTip("Text wird beim Speichern zum Standard dieser Kategorie und bei neuen Belegen eingesetzt")
+        checks = QHBoxLayout()
+        checks.setContentsMargins(0, 0, 0, 0)
+        checks.addWidget(self.remember)
+        checks.addSpacing(16)
+        checks.addWidget(self.as_default)
+        checks.addStretch(1)
+        outer.addLayout(checks)
         # erst nach dem Einbau: setVisible(True) an einem Widget ohne Eltern öffnet es kurz als eigenes Fenster
         self.remember.setVisible(remember)
+        self.as_default.setVisible(can_default)
 
     def pick(self):
         dlg = TextPicker(self, self.ctx, self.categories)
@@ -111,6 +123,7 @@ class TextField(QWidget):
         self.edit.setReadOnly(ro)
         if ro:
             self.remember.setVisible(False)
+            self.as_default.setVisible(False)
 
 
 class DocumentEditor(QDialog):
@@ -217,9 +230,9 @@ class DocumentEditor(QDialog):
         # ---- Texte oben
         texts = QGroupBox("Anschreiben")
         tf = QFormLayout(texts)
-        self.salutation = TextField(ctx, ["anrede"], 32)
+        self.salutation = TextField(ctx, ["anrede"], 32, can_default=True)
         self.salutation.edit.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.header = TextField(ctx, ["kopf_angebot", "kopf_rechnung", "storno"] if dt != "angebot" else ["kopf_angebot", "kopf_rechnung"], 48)
+        self.header = TextField(ctx, ["kopf_angebot", "kopf_rechnung", "storno"] if dt != "angebot" else ["kopf_angebot", "kopf_rechnung"], 48, can_default=True)
         tf.addRow("Anrede", self.salutation)
         # Platzhalter wie {briefanrede} sagen Einsteigern nichts: darunter steht, was im Brief erscheint
         self.salutation_preview = QLabel()
@@ -267,15 +280,21 @@ class DocumentEditor(QDialog):
         # ---- Texte unten
         foot = QGroupBox("Schluss")
         ff = QFormLayout(foot)
-        self.footer = TextField(ctx, ["fuss_rechnung", "fuss_angebot", "gruss"], 80)
-        self.notes = TextField(ctx, ["hinweis"], 44)
+        self.footer = TextField(ctx, ["fuss_rechnung", "fuss_angebot", "gruss"], 80, can_default=True)
+        self.notes = TextField(ctx, ["hinweis"], 44, can_default=True)
         ff.addRow("Schlusstext", self.footer)
         ff.addRow("Hinweise", self.notes)
         root.addWidget(foot)
-        ph = QLabel("Platzhalter: {briefanrede} {faellig} {zahlungsziel} {iban} {belegnr} {gueltig_bis} {inhaber} "
-                    "{objekt_adresse} {projekt} {leistungsdatum} {datum} {betrag}")
+        ph = QLabel("Platzhalter wie {datum} oder {faellig} werden im Beleg ersetzt – im Textfeld „{“ tippen "
+                    "öffnet eine Auswahl.")
         ph.setStyleSheet("color:#5A6A6E; font-size:8.5pt")
-        root.addWidget(ph)
+        root.addLayout(hbox(ph, button("Platzhalter…", self.show_placeholders,
+                                       tooltip="Übersicht aller Platzhalter mit den Werten dieses Belegs"), None))
+        # Vorschlagliste beim Tippen von „{“, mit den Werten dieses Belegs; das zuletzt benutzte Feld merken
+        self._last_text_edit = self.header.edit
+        for tf in (self.salutation, self.header, self.desc, self.footer, self.notes):
+            placeholders_ui.attach(tf.edit, lambda: placeholder_catalog.for_context("beleg"), self._placeholder_values,
+                                   on_focus=self._remember_text_edit)
 
         # ---- Aktionen
         self.actions = QHBoxLayout()
@@ -586,6 +605,28 @@ class DocumentEditor(QDialog):
             self.setWindowTitle(f"{documents.DOC_TYPE_LABEL[self.doc['doc_type']]} (Entwurf gespeichert)")
         return True
 
+    # ------------------------------------------------------------ Platzhalter
+    def _remember_text_edit(self, edit) -> None:
+        self._last_text_edit = edit
+
+    def _placeholder_values(self) -> dict:
+        """Werte der Platzhalter für den aktuellen Bearbeitungsstand (Vorschlagliste, Übersicht)."""
+        doc = self.doc if self.readonly else self._collect()
+        if getattr(self, "_totals", None):
+            doc = {**doc, "total_gross_cents": self._totals["gross"]}
+        number = None
+        if not doc.get("number"):
+            number = f"voraussichtlich {numbering.peek_next(self.ctx.con, doc['doc_type'], self.doc_date.date().toPython())}"
+        return documents.placeholders(self.ctx.con, doc, number=number)
+
+    def show_placeholders(self):
+        try:
+            values = self._placeholder_values()
+        except Exception:  # noqa: BLE001 – Übersicht auch ohne Werte zeigen
+            values = {}
+        target = None if self.readonly else self._last_text_edit
+        placeholders_ui.PlaceholderDialog(self, placeholder_catalog.for_context("beleg"), target, values).exec()
+
     def _text_fields(self) -> list[tuple[TextField, str]]:
         """Textfelder mit der Kategorie, in die ein neuer Text als Baustein übernommen wird."""
         dt = self.doc["doc_type"]
@@ -604,7 +645,10 @@ class DocumentEditor(QDialog):
             return
         try:
             for tf, cat in self._text_fields():
-                if tf.remember.isChecked() and tf.text().strip() != self._base_texts.get(id(tf)):
+                if tf.as_default.isChecked():
+                    repo.set_default_text(self.ctx.con, cat, tf.text())   # legt den Baustein bei Bedarf auch an
+                    tf.as_default.setChecked(False)                     # einmalige Aktion
+                elif tf.remember.isChecked() and tf.text().strip() != self._base_texts.get(id(tf)):
                     repo.remember_text(self.ctx.con, cat, tf.text())
             if self.desc.remember.isChecked():
                 for ln in lines:
@@ -662,9 +706,10 @@ class DocumentEditor(QDialog):
             return
         self.ctx.changed()
         copied = export_after_finalize(self, self.ctx, self.doc)
-        if ask_send_after_finalize(self, f"{label} {self.doc['number']} wurde festgeschrieben und archiviert.{copied}"):
+        choice = ask_after_finalize(self, f"{label} {self.doc['number']} wurde festgeschrieben und archiviert.{copied}")
+        if choice == "mail":
             send_mail(self, self.ctx, self.doc)
-        else:
+        elif choice == "pdf":
             open_file(self.doc["pdf_path"])
         self.accept()
 

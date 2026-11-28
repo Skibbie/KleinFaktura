@@ -551,8 +551,12 @@ def test_mail_ui_messages(gui):
     assert any("trotzdem festgeschrieben" in t for t in _texts(log, "warning"))
     mp.setattr(mail, "export_copy", lambda con, d: tmp / "kopie.pdf")
     assert "kopie.pdf" in mail_ui.export_after_finalize(None, ctx, doc)
-    mp.setattr(QMessageBox, "exec", lambda self: 0)
-    assert mail_ui.ask_send_after_finalize(None, "Festgeschrieben.") is False
+    # Escape/X löst „Schließen“ aus: weder PDF noch E-Mail
+    mp.setattr(QMessageBox, "exec", lambda self: self.escapeButton().click())
+    assert mail_ui.ask_after_finalize(None, "Festgeschrieben.") is None
+    for label, choice in (("PDF öffnen", "pdf"), ("Per E-Mail senden…", "mail")):
+        mp.setattr(QMessageBox, "exec", lambda self, _l=label: next(b for b in self.buttons() if b.text() == _l).click())
+        assert mail_ui.ask_after_finalize(None, "Festgeschrieben.") == choice
 
 
 @pytest.mark.parametrize("wait_ms", [0, 30])

@@ -201,7 +201,8 @@ def new_draft(con: sqlite3.Connection, doc_type: str, customer_id: int | None = 
         "ref_document_id": None,
     }
     gruss = repo.default_text(con, "gruss")
-    if gruss:
+    # ein Schlusstext, der die Grußformel schon enthält (z.B. aus einem Beleg übernommen), bekommt sie nicht doppelt
+    if gruss and gruss.strip() not in doc["footer_text"]:
         doc["footer_text"] = (doc["footer_text"] + "\n\n" + gruss).strip()
     return doc
 

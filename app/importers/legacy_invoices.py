@@ -425,7 +425,7 @@ def check_collisions(con: sqlite3.Connection, inv: ParsedInvoice, number: str | 
                                            f"{ex['total_gross_cents'] / 100:.2f} €).".replace(".", ",", 1), dict(ex)))
         if not numbering.parse_number(con, number, doc_type):
             out.append(Collision("number_format", f"Die Nummer {number} entspricht nicht dem Schema "
-                                                  f"{'ANJJJJ-MMNN' if doc_type == 'angebot' else 'JJJJ-MMNN'}."))
+                                                  f"{numbering.get_format(con, doc_type).pattern()}."))
     else:
         out.append(Collision("number_format", "Keine Belegnummer angegeben."))
     return out

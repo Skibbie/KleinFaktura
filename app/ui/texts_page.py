@@ -7,9 +7,11 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QLabel, QLineE
 
 from app.db import repo
 from app.db.database import get_setting, set_setting
+from app.services import placeholder_catalog
 from app.money import fmt_eur, input_cents
 from app.ui.article_dialogs import (category_filter_combo, export_articles, fill_category_filter, run_article_import,
                                     save_article_template)
+from app.ui import placeholders_ui
 from app.ui.common import (CANCEL, SAVE, Ctx, ask_save, button, confirm, hbox, item, make_table, page_title,
                            selected_data)
 
@@ -71,13 +73,15 @@ class TextblockTab(_FormGuard, QWidget):
         f.addRow("Titel", self.title)
         f.addRow("Text", self.body)
         f.addRow("", self.is_default)
-        ph = QLabel("Platzhalter: {briefanrede} {kunde} {faellig} {zahlungsziel} {iban} {bic} {belegnr} {betrag} "
-                    "{gueltig_bis} {datum} {leistungsdatum} {inhaber} {firma} {objekt_adresse} {projekt} "
-                    "{ref_belegnr} {ref_datum}. In Mahnungen zusätzlich: {offen} {gebuehr} {gesamt} {neu_faellig} "
-                    "{rechnungsnr} {rechnungsdatum}")
-        ph.setWordWrap(True)
-        ph.setObjectName("muted")
-        f.addRow("", ph)
+        self.ph_hint = QLabel()
+        self.ph_hint.setWordWrap(True)
+        self.ph_hint.setObjectName("muted")
+        self.ph_button = button("Platzhalter…", self.show_placeholders,
+                                tooltip="Übersicht aller Platzhalter dieser Kategorie – mit „Einfügen“ an der Cursorposition")
+        f.addRow("", hbox(self.ph_hint, self.ph_button))
+        placeholders_ui.attach(self.body, self._placeholders)
+        self.category.currentIndexChanged.connect(self._update_placeholder_hint)
+        self._update_placeholder_hint()
         f.addRow("", hbox(None, button("Speichern", self.save, primary=True)))
         sp.addWidget(right)
         sp.setSizes([320, 700])
@@ -91,6 +95,19 @@ class TextblockTab(_FormGuard, QWidget):
         ctx.listeners.append(self._reload_keep)  # z.B. neuer Anlass aus einer Fahrt
         self.reload()
         self.mark_clean()
+
+    def _placeholders(self):
+        return placeholder_catalog.for_category(self.category.currentData())
+
+    def _update_placeholder_hint(self, *_):
+        has = bool(self._placeholders())
+        self.ph_hint.setText("Platzhalter wie {datum} oder {betrag} werden beim Erstellen ersetzt – im Text „{“ tippen "
+                             "öffnet eine Auswahl." if has else "In dieser Kategorie werden keine Platzhalter ersetzt.")
+        self.ph_button.setEnabled(has)
+
+    def show_placeholders(self):
+        label = repo.TEXT_CATEGORIES.get(self.category.currentData(), "")
+        placeholders_ui.PlaceholderDialog(self, self._placeholders(), self.body, title=f"Platzhalter – {label}").exec()
 
     def _snapshot(self):
         return (self.current_id, self.category.currentIndex(), self.title.text(), self.body.toPlainText(),
