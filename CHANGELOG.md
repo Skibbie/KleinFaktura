@@ -10,7 +10,8 @@ automatisch als Beschreibung übernommen. Neue Einträge zuerst unter `## [Unver
   und fügt den gewählten an der Cursorposition ein
 - Nummernkreise frei einstellbar (Einstellungen → Steuer und Belege): Präfix, Jahr 4-/2-stellig oder ohne, Monat ja/nein,
   Trennzeichen und Stellen des Zählers – mit Vorschau der nächsten Nummer; der Zähler beginnt je Monat, je Jahr oder
-  nie neu. Bisherige Nummern und das Standardschema `JJJJ-MMNN` bleiben unverändert
+  nie neu. Bisherige Nummern und das Standardschema `JJJJ-MMNN` bleiben unverändert. Nach einem Wechsel der Zählweise
+  zählt der Kreis oberhalb der vorhandenen Nummern weiter; die angekündigte Nummer ist stets die tatsächlich vergebene
 - Belegtexte (Anrede, Einleitung, Schlusstext, Hinweise): neuer Haken „Als Standard setzen“ – der Text wird beim
   Speichern zum Standard für neue Belege; beim Schlusstext wird die Grußformel nicht doppelt übernommen
 - Meldung „Festgeschrieben“: neuer Knopf „Schließen“; X und Escape schließen sie jetzt, ohne PDF oder E-Mail zu öffnen

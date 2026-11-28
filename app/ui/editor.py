@@ -598,11 +598,17 @@ class DocumentEditor(QDialog):
         except Exception as e:  # noqa: BLE001
             error(self, "Speichern fehlgeschlagen", e)
             return False
-        self._remember_texts(lines)
+        defaults_set, defaults_empty = self._remember_texts(lines)
         self.mark_clean()
         self.ctx.changed()
         if not quiet:
             self.setWindowTitle(f"{documents.DOC_TYPE_LABEL[self.doc['doc_type']]} (Entwurf gespeichert)")
+        if defaults_empty:
+            QMessageBox.information(self, "Als Standard setzen", "Leerer Text – nicht als Standard übernommen: "
+                                    + ", ".join(defaults_empty) + ".")
+        if defaults_set and not quiet:
+            QMessageBox.information(self, "Als Standard setzen", "Gilt ab jetzt als Standard für neue Belege: "
+                                    + ", ".join(defaults_set) + ".")
         return True
 
     # ------------------------------------------------------------ Platzhalter
@@ -640,13 +646,19 @@ class DocumentEditor(QDialog):
         self._base_descs = {(ln.get("description") or "").strip() for ln in self.lines()}
         self._base_descs |= {(a.get("description") or "").strip() for a in repo.list_articles(self.ctx.con, True)}
 
-    def _remember_texts(self, lines: list[dict]) -> None:
+    def _remember_texts(self, lines: list[dict]) -> tuple[list[str], list[str]]:
+        """Texte als Bausteine übernehmen. Rückgabe: Felder, die zum Standard wurden, und solche, die leer waren."""
+        defaults_set, defaults_empty = [], []
         if self.readonly:
-            return
+            return defaults_set, defaults_empty
+        labels = {id(self.salutation): "Anrede", id(self.header): "Einleitung", id(self.footer): "Schlusstext",
+                  id(self.notes): "Hinweise"}
         try:
             for tf, cat in self._text_fields():
                 if tf.as_default.isChecked():
-                    repo.set_default_text(self.ctx.con, cat, tf.text())   # legt den Baustein bei Bedarf auch an
+                    # legt den Baustein bei Bedarf auch an; False = nichts übrig (leer bzw. nur die Grußformel)
+                    ok = repo.set_default_text(self.ctx.con, cat, tf.text())
+                    (defaults_set if ok else defaults_empty).append(labels[id(tf)])
                     tf.as_default.setChecked(False)                     # einmalige Aktion
                 elif tf.remember.isChecked() and tf.text().strip() != self._base_texts.get(id(tf)):
                     repo.remember_text(self.ctx.con, cat, tf.text())
@@ -657,6 +669,7 @@ class DocumentEditor(QDialog):
         except Exception as e:  # noqa: BLE001 – der Beleg ist gespeichert, nur die Übernahme scheiterte
             error(self, "Textbausteine", f"Texte konnten nicht als Textbausteine übernommen werden: {e}")
         self._remember_base()
+        return defaults_set, defaults_empty
 
     def preview(self):
         try:

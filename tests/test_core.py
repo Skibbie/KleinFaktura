@@ -151,6 +151,49 @@ def test_numbering_format_validation_and_collisions(con):
         assert numbering.allocate(con, "rechnung", date(2026, 1, 6)) == "2026-0102"
 
 
+def test_numbering_scheme_change_continues_above_existing(con):
+    """Nach einem Wechsel der Zählweise setzt der Zähler oberhalb vorhandener Nummern fort (keine Rückwärtsfolge),
+    und die Vorschau nennt genau die Nummer, die vergeben wird."""
+    from app.db.database import transaction
+    from app.services import documents, numbering
+    cid = _customer(con)
+    for day in ("2026-11-02", "2026-11-03", "2026-11-04"):
+        documents.finalize(con, _invoice(con, cid, on=day), pdf_writer=_fake_pdf)
+    _set_format(con, "rechnung", prefix="", year=4, month=False, sep="-", digits=4)   # je Jahr
+    assert numbering.last_value(con, "rechnung", date(2026, 11, 20)) == 1103
+    nxt = numbering.peek_next(con, "rechnung", date(2026, 11, 20))
+    assert nxt == "2026-1104"
+    with transaction(con):
+        assert numbering.allocate(con, "rechnung", date(2026, 11, 20)) == nxt
+    # Vorschau überspringt wie die Vergabe vorhandene Nummern
+    _set_format(con, "rechnung", prefix="", year=4, month=True, sep="-", digits=2)
+    documents.finalize(con, _invoice(con, cid, on="2026-12-01"), pdf_writer=_fake_pdf)   # 2026-1201
+    _set_format(con, "rechnung", prefix="", year=4, month=False, sep="-", digits=4)
+    nxt = numbering.peek_next(con, "rechnung", date(2026, 12, 20))
+    with transaction(con):
+        assert numbering.allocate(con, "rechnung", date(2026, 12, 20)) == nxt == "2026-1202"
+
+
+def test_numbering_stored_format_error_and_prefix(con):
+    from app.db.database import set_setting
+    from app.services import numbering
+    assert numbering.format_error(con, "rechnung") is None
+    with pytest.raises(ValueError):
+        numbering.NumberFormat(prefix="RE\n")            # kein Zeilenumbruch am Ende (fullmatch)
+    set_setting(con, "number.invoice_year", "0")           # Monat ohne Jahr: ungültig
+    assert "Monat" in numbering.format_error(con, "rechnung")
+    assert numbering.get_format(con, "rechnung").pattern() == "JJJJ-MMNN"
+    set_setting(con, "number.invoice_prefix", "RE\n")
+    assert numbering.get_format(con, "rechnung").prefix == ""
+
+
+def test_legacy_base_number():
+    from app.importers.legacy_invoices import base_number
+    assert base_number("2026-1101-D2") == "2026-1101"
+    assert base_number("RE-D2026-0001") == "RE-D2026-0001"     # Präfix mit „-D“ bleibt
+    assert base_number("RE-D2026-0001-D1") == "RE-D2026-0001"
+
+
 def test_numbering_legacy_digits_setting(con):
     from app.db.database import set_setting
     from app.services import numbering

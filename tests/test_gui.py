@@ -721,7 +721,56 @@ def test_editor_set_as_default(gui):
     assert d["footer_text"].count("Mit freundlichen Grüßen") == 1
     # Rechnungen behalten ihren Standard
     assert documents.new_draft(ctx.con, "rechnung", cid)["header_text"] != "Meine neue Angebotseinleitung"
+    # Rückmeldung: Erfolg beim normalen Speichern, Hinweis bei leerem Text
+    log.clear()
+    ed.notes.setText("Hinweis für alle")
+    ed.notes.as_default.setChecked(True)
+    ed.salutation.setText("")
+    ed.salutation.as_default.setChecked(True)
+    assert ed.save()
+    texts = [t for kind, t in log if kind == "information"]
+    assert any("Hinweise" in t and "Standard" in t for t in texts)
+    assert any("Leerer Text" in t and "Anrede" in t for t in texts)
+    assert not ed.salutation.as_default.isChecked()
     ed.reject()
+
+
+def test_placeholder_popup_stays_on_screen_and_closes_on_move(gui):
+    app, ctx, log, mp, tmp = gui
+    from PySide6.QtWidgets import QPlainTextEdit, QVBoxLayout, QWidget
+    from app.services import placeholder_catalog as pc
+    from app.ui import placeholders_ui
+    win = QWidget()
+    edit = QPlainTextEdit()
+    QVBoxLayout(win).addWidget(edit)
+    avail = win.screen().availableGeometry()
+    win.setGeometry(avail.right() - 150, avail.bottom() - 60, 140, 50)   # rechts unten am Rand
+    win.show()
+    app.processEvents()
+    mp.setattr(QPlainTextEdit, "hasFocus", lambda self: True)
+    calls = []
+    c = placeholders_ui.attach(edit, lambda: pc.for_context("beleg"), lambda: calls.append(1) or {})
+    edit.insertPlainText("{")
+    assert c.is_open()
+    assert avail.contains(c.popup.frameGeometry()) or avail.contains(c.popup.geometry())
+    edit.insertPlainText("d")
+    edit.insertPlainText("a")
+    assert len(calls) == 1                      # Werte nur einmal je Öffnen
+    win.move(win.x() - 20, win.y() - 20)
+    app.processEvents()
+    assert not c.is_open()
+    win.close()
+
+
+def test_settings_shows_broken_number_format(gui):
+    app, ctx, log, mp, tmp = gui
+    from app.db.database import set_setting
+    from app.ui.settings_page import SettingsPage
+    set_setting(ctx.con, "number.invoice_sep", "/")
+    sp = SettingsPage(ctx)
+    box = sp.nr_formats["rechnung"]
+    assert not box.stored_error.isHidden() and "ungültig" in box.stored_error.text()
+    assert sp.nr_formats["angebot"].stored_error.isHidden()
 
 
 def _key(widget, key, text=""):

@@ -9,7 +9,8 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QPlainTextEdit, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
@@ -52,6 +53,9 @@ class PlaceholderCompleter(QObject):
         super().__init__(edit)
         self.edit, self.items_fn, self.values_fn, self.on_focus = edit, items_fn, values_fn, on_focus
         self.prefix = ""
+        self._values: dict | None = None    # Werte nur einmal je Öffnen holen (nicht bei jedem Tastendruck)
+        self._shown_for: str | None = None  # Text vor dem Cursor, für den die Liste zuletzt aufgebaut wurde
+        self._window = None                 # Fenster, dessen Verschieben die Liste schließt
         self.popup = QListWidget()
         self.popup.setWindowFlags(Qt.ToolTip | Qt.FramelessWindowHint)
         self.popup.setAttribute(Qt.WA_ShowWithoutActivating)
@@ -74,21 +78,43 @@ class PlaceholderCompleter(QObject):
             return c.block().text()[:c.positionInBlock()]
         return self.edit.text()[:self.edit.cursorPosition()]
 
-    def _anchor(self) -> QPoint:
+    def _cursor_rect(self) -> QRect:
+        """Rechteck um die Schreibmarke (bzw. das einzeilige Feld) in Bildschirmkoordinaten."""
         if isinstance(self.edit, QPlainTextEdit):
-            return self.edit.viewport().mapToGlobal(self.edit.cursorRect().bottomLeft() + QPoint(0, 4))
-        return self.edit.mapToGlobal(self.edit.rect().bottomLeft())
+            r = self.edit.cursorRect()
+            return QRect(self.edit.viewport().mapToGlobal(r.topLeft()), r.size())
+        return QRect(self.edit.mapToGlobal(QPoint(0, 0)), self.edit.size())
+
+    def _place(self) -> None:
+        """Unter die Schreibmarke legen – passt die Liste dort nicht auf den Bildschirm, darüber; nie über den Rand."""
+        r = self._cursor_rect()
+        screen = QGuiApplication.screenAt(r.center()) or self.edit.screen()
+        avail = screen.availableGeometry()
+        if self.popup.width() > avail.width() or self.popup.height() > avail.height():
+            self.popup.resize(min(self.popup.width(), avail.width()), min(self.popup.height(), avail.height()))
+        size = self.popup.size()
+        x = max(avail.left(), min(r.left(), avail.right() - size.width() + 1))
+        y = r.bottom() + 4
+        if y + size.height() > avail.bottom() + 1 and r.top() - 4 - size.height() >= avail.top():
+            y = r.top() - 4 - size.height()
+        y = max(avail.top(), min(y, avail.bottom() - size.height() + 1))
+        self.popup.move(x, y)
 
     # ------------------------------------------------------------ Liste
     def update_popup(self, *_):
-        m = _OPEN.search(self._before_cursor()) if self.edit.hasFocus() else None
+        before = self._before_cursor()
+        if self.popup.isVisible() and before == self._shown_for:
+            return   # Textänderung und Cursorbewegung melden denselben Tastendruck doppelt
+        m = _OPEN.search(before) if self.edit.hasFocus() else None
         items = self.items_fn() if m else []
         if not m or not items:
             self.hide()
             return
         self.prefix = m[1]
         needle = self.prefix.casefold()
-        values = _safe_values(self.values_fn)
+        if self._values is None:
+            self._values = _safe_values(self.values_fn)
+        values = self._values
         # zuerst Namen, die so beginnen, dann solche, die den Text enthalten (z.B. „dat“ → datum, leistungsdatum)
         hits = sorted((p for p in items if needle in p.name.casefold()), key=lambda p: not p.name.startswith(needle))
         if not hits:
@@ -106,8 +132,10 @@ class PlaceholderCompleter(QObject):
         rows = min(len(hits), 10)
         self.popup.resize(max(420, self.popup.sizeHintForColumn(0) + 24),
                           rows * self.popup.sizeHintForRow(0) + 2 * self.popup.frameWidth() + 2)
-        self.popup.move(self._anchor())
+        self._place()
         self.popup.show()
+        self._shown_for = before
+        self._watch_window()
 
     def _cursor_moved(self):
         if self.popup.isVisible():
@@ -115,6 +143,16 @@ class PlaceholderCompleter(QObject):
 
     def hide(self):
         self.popup.hide()
+        self._values, self._shown_for = None, None
+
+    def _watch_window(self) -> None:
+        """Verschieben oder Verkleinern des Fensters schließt die Liste (sie bliebe sonst an der alten Stelle)."""
+        win = self.edit.window()
+        if win is not self._window and win is not self.edit:
+            if self._window is not None:
+                self._window.removeEventFilter(self)
+            win.installEventFilter(self)
+            self._window = win
 
     def _hide_if_unfocused(self):
         if not self.edit.hasFocus():
@@ -147,6 +185,12 @@ class PlaceholderCompleter(QObject):
     # ------------------------------------------------------------ Tasten
     def eventFilter(self, obj, event):
         t = event.type()
+        if getattr(self, "edit", None) is None:
+            return False   # Python-Seite wird gerade abgebaut, Fenster-Ereignisse kommen noch an
+        if obj is not self.edit:
+            if t in (QEvent.Move, QEvent.Resize, QEvent.WindowStateChange, QEvent.Hide) and self.popup.isVisible():
+                self.hide()
+            return False
         if t == QEvent.FocusIn and self.on_focus:
             self.on_focus(self.edit)
         elif t == QEvent.FocusOut:

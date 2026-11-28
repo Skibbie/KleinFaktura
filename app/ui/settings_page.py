@@ -67,10 +67,15 @@ class NumberFormatBox(QGroupBox):
         self.digits.setToolTip("Mindestanzahl Stellen des Zählers, mit führenden Nullen aufgefüllt")
         self.preview = QLabel()
         self.preview.setTextFormat(Qt.RichText)
+        # gespeichertes Schema unbrauchbar (z.B. von Hand geändert): sichtbar machen statt still das Standardschema
+        self.stored_error = QLabel()
+        self.stored_error.setWordWrap(True)
+        self.stored_error.setStyleSheet("color:#B00020")
         f.addRow("Präfix", self.prefix)
         f.addRow("Jahr", hbox(self.year, self.month, None))
         f.addRow("Trennzeichen", hbox(self.sep, QLabel("Stellen des Zählers"), self.digits, None))
         f.addRow("Nächste Nummer", self.preview)
+        f.addRow(self.stored_error)
         self.load()
         self.prefix.textChanged.connect(self._update)
         self.year.currentIndexChanged.connect(self._update)
@@ -85,6 +90,10 @@ class NumberFormatBox(QGroupBox):
         self.month.setChecked(fmt.month)
         self.sep.setCurrentIndex(self.sep.findData(fmt.sep))
         self.digits.setValue(fmt.digits)
+        problem = numbering.format_error(self.ctx.con, self.doc_type)
+        self.stored_error.setText(f"Das gespeicherte Schema ist ungültig ({problem}) – bis zum Speichern gilt das "
+                                  "Standardschema." if problem else "")
+        self.stored_error.setVisible(bool(problem))
         self._update()
 
     def fmt(self) -> numbering.NumberFormat:
@@ -516,9 +525,15 @@ class SettingsPage(QWidget):
                 continue
             keys = numbering.setting_keys(doc_type)
             values += [(keys[k], v) for k, v in numbering.format_values(fmt).items()]
-            if fmt != numbering.get_format(self.ctx.con, doc_type):
-                changed.append(f"{box.title()}: {numbering.peek_next(self.ctx.con, doc_type)} → "
-                               f"{numbering.peek_next(self.ctx.con, doc_type, fmt=fmt)} ({fmt.describe_reset()})")
+            old = numbering.get_format(self.ctx.con, doc_type)
+            if fmt != old:
+                line = (f"{box.title()}: {numbering.peek_next(self.ctx.con, doc_type)} → "
+                        f"{numbering.peek_next(self.ctx.con, doc_type, fmt=fmt)} ({fmt.describe_reset()})")
+                if fmt.reset != old.reset and fmt.prefix == old.prefix:
+                    # gleich aussehende Nummern mit anderer Bedeutung (2026-1101 = 1. Nov. oder 1101. im Jahr)
+                    line += ("\n   Tipp: Die Zählweise ändert sich. Ein neues Präfix (z.B. „RE-“) macht alte und "
+                             "neue Nummern unterscheidbar.")
+                changed.append(line)
         if problems:
             QMessageBox.warning(self, "Einstellungen", "Bitte korrigieren:\n\n• " + "\n• ".join(problems))
             return None
@@ -600,10 +615,10 @@ class SettingsPage(QWidget):
         on = date(self.nr_year.value(), self.nr_month.value() if fmt.month else 1, 1)
         nxt = fmt.render(on, v + 1)
         scope = {"monat": f" für {on.month:02d}/{on.year}", "jahr": f" für {on.year}", "nie": ""}[fmt.reset]
-        if v < numbering.last_value(self.ctx.con, t, on):
-            QMessageBox.information(self, "Startwert", f"Zuletzt vergeben{scope} ist bereits "
-                                                       f"{numbering.last_value(self.ctx.con, t, on)} – der Zähler kann "
-                                                       "nicht verringert werden.")
+        last = numbering.last_value(self.ctx.con, t, on)   # berücksichtigt auch vorhandene Belege
+        if v < last:
+            QMessageBox.information(self, "Startwert", f"Zuletzt vergeben{scope} ist bereits {last} – der Zähler "
+                                                       "kann nicht verringert werden.")
             return
         if not confirm(self, "Startwert", f"Zuletzt vergebene Nummer{scope} auf {v} setzen?\n"
                                           f"Nächste Nummer wird {nxt}.\n\nDer Zähler kann danach nicht verringert werden."):
@@ -617,4 +632,4 @@ class SettingsPage(QWidget):
             error(self, "Startwert", e)
             return
         self.nr_formats[t].load()   # Vorschau „Nächste Nummer“ aktualisieren
-        QMessageBox.information(self, "Startwert", f"Gesetzt. Nächste Nummer: {nxt}")
+        QMessageBox.information(self, "Startwert", f"Gesetzt. Nächste Nummer: {numbering.peek_next(self.ctx.con, t, on)}")

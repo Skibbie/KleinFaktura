@@ -19,7 +19,7 @@ from app.db.database import get_setting
 RANGE_FOR_TYPE = {"rechnung": "rechnung", "storno": "rechnung", "angebot": "angebot"}
 _KEY = {"rechnung": "invoice", "angebot": "offer"}
 SEPARATORS = {"-": "Bindestrich (-)", "_": "Unterstrich (_)", ".": "Punkt (.)", "": "keins"}
-PREFIX_RE = re.compile(r"^[A-Za-z0-9ÄÖÜäöüß_.-]{0,10}$")
+PREFIX_RE = re.compile(r"[A-Za-z0-9ÄÖÜäöüß_.-]{0,10}")   # nur mit fullmatch verwenden
 MIN_DIGITS, MAX_DIGITS = 1, 8
 CONTINUOUS = "*"   # Periode für Kreise ohne Jahr: Zähler läuft immer weiter
 
@@ -39,7 +39,7 @@ class NumberFormat:
             raise ValueError("Ein Monat ist nur zusammen mit dem Jahr möglich.")
         if self.sep not in SEPARATORS:
             raise ValueError(f"Unzulässiges Trennzeichen „{self.sep}“.")
-        if not PREFIX_RE.match(self.prefix):
+        if not isinstance(self.prefix, str) or not PREFIX_RE.fullmatch(self.prefix):
             raise ValueError("Präfix: höchstens 10 Zeichen, nur Buchstaben, Ziffern, - _ und Punkt "
                              "(die Nummer wird auch Dateiname).")
         if not MIN_DIGITS <= self.digits <= MAX_DIGITS:
@@ -81,18 +81,34 @@ def setting_keys(rng: str) -> dict[str, str]:
             "sep": f"number.{k}_sep", "digits": f"number.{k}_digits"}
 
 
-def get_format(con: sqlite3.Connection, doc_type: str) -> NumberFormat:
-    rng = RANGE_FOR_TYPE[doc_type]
+def _stored_format(con: sqlite3.Connection, rng: str) -> NumberFormat:
+    """Gespeichertes Schema; ValueError, wenn die Einstellungen kein gültiges Schema ergeben."""
     k = setting_keys(rng)
     # Stellen hießen früher gemeinsam „number.digits“; der Wert gilt weiter, bis je Kreis etwas eingestellt ist
     digits = get_setting(con, k["digits"]) or get_setting(con, "number.digits", "2")
+    return NumberFormat(prefix=get_setting(con, k["prefix"]), year=int(get_setting(con, k["year"], "4")),
+                        month=get_setting(con, k["month"], "1") == "1", sep=get_setting(con, k["sep"], "-"),
+                        digits=int(digits))
+
+
+def format_error(con: sqlite3.Connection, doc_type: str) -> str | None:
+    """Fehlerbeschreibung, wenn das gespeicherte Schema ungültig ist (dann gilt das Standardschema), sonst None."""
     try:
-        return NumberFormat(prefix=get_setting(con, k["prefix"]), year=int(get_setting(con, k["year"], "4")),
-                            month=get_setting(con, k["month"], "1") == "1", sep=get_setting(con, k["sep"], "-"),
-                            digits=int(digits))
+        _stored_format(con, RANGE_FOR_TYPE[doc_type])
+    except ValueError as e:
+        return str(e)
+    return None
+
+
+def get_format(con: sqlite3.Connection, doc_type: str) -> NumberFormat:
+    rng = RANGE_FOR_TYPE[doc_type]
+    try:
+        return _stored_format(con, rng)
     except ValueError:
-        # beschädigte Einstellung: lieber das bewährte Standardschema als gar keine Nummer
-        return NumberFormat(prefix=get_setting(con, k["prefix"]) if PREFIX_RE.match(get_setting(con, k["prefix"])) else "")
+        # beschädigte Einstellung: lieber das bewährte Standardschema als gar keine Nummer;
+        # die Einstellungsseite zeigt den Fehler an (format_error)
+        prefix = get_setting(con, setting_keys(rng)["prefix"])
+        return NumberFormat(prefix=prefix if PREFIX_RE.fullmatch(prefix) else "")
 
 
 def format_values(fmt: NumberFormat) -> dict[str, str]:
@@ -101,9 +117,7 @@ def format_values(fmt: NumberFormat) -> dict[str, str]:
             "digits": str(fmt.digits)}
 
 
-def parse_number(con, number: str, doc_type: str) -> tuple[str, int] | None:
-    """Zerlegt eine Nummer im eingestellten Schema -> (Periode, Zähler) oder None."""
-    fmt = get_format(con, doc_type)
+def _parse(fmt: NumberFormat, number: str) -> tuple[str, int] | None:
     m = fmt.regex().match(number.strip())
     if not m:
         return None
@@ -116,16 +130,46 @@ def parse_number(con, number: str, doc_type: str) -> tuple[str, int] | None:
     return fmt.period(date(year, month, 1)), int(m[3])
 
 
+def parse_number(con, number: str, doc_type: str) -> tuple[str, int] | None:
+    """Zerlegt eine Nummer im eingestellten Schema -> (Periode, Zähler) oder None."""
+    return _parse(get_format(con, doc_type), number)
+
+
 def _last(con, rng: str, period: str) -> int:
     row = con.execute("SELECT last_value FROM number_range WHERE doc_type=? AND period=?", (rng, period)).fetchone()
     return row[0] if row else 0
 
 
+def _highest_existing(con, rng: str, fmt: NumberFormat, period: str) -> int:
+    """Höchster Zähler vorhandener Belege des Kreises, die im Schema `fmt` in den Zeitraum fallen.
+    Nach einem Schemawechsel (z.B. von „je Monat“ auf „je Jahr“) setzt der neue Zähler so oberhalb der bisherigen
+    Nummern fort, statt wieder bei 1 zu beginnen und die Folge durcheinanderzubringen."""
+    types = [t for t, r in RANGE_FOR_TYPE.items() if r == rng]
+    rows = con.execute(f"SELECT number FROM document WHERE number IS NOT NULL AND doc_type IN "
+                       f"({','.join('?' * len(types))})", types)
+    best = 0
+    for (number,) in rows:
+        parsed = _parse(fmt, number)
+        if parsed and parsed[0] == period:
+            best = max(best, parsed[1])
+    return best
+
+
+def _next_free(con, rng: str, fmt: NumberFormat, on: date) -> int:
+    """Nächster freier Zähler – gemeinsame Rechnung für Vorschau und Vergabe, damit beide übereinstimmen."""
+    period = fmt.period(on)
+    nxt = max(_last(con, rng, period), _highest_existing(con, rng, fmt, period)) + 1
+    # Sicherheitsnetz: falls die Nummer (z.B. durch Import oder ein früheres Schema) schon existiert, weiterzählen
+    while con.execute("SELECT 1 FROM document WHERE number=?", (fmt.render(on, nxt),)).fetchone():
+        nxt += 1
+    return nxt
+
+
 def peek_next(con: sqlite3.Connection, doc_type: str, on: date | None = None, fmt: NumberFormat | None = None) -> str:
-    """Voraussichtlich nächste Nummer; `fmt` für die Vorschau eines noch nicht gespeicherten Schemas."""
+    """Nächste Nummer, wie allocate() sie vergeben würde; `fmt` für die Vorschau eines noch nicht gespeicherten Schemas."""
     on = on or date.today()
     fmt = fmt or get_format(con, doc_type)
-    return fmt.render(on, _last(con, RANGE_FOR_TYPE[doc_type], fmt.period(on)) + 1)
+    return fmt.render(on, _next_free(con, RANGE_FOR_TYPE[doc_type], fmt, on))
 
 
 def allocate(con: sqlite3.Connection, doc_type: str, on: date) -> str:
@@ -135,10 +179,7 @@ def allocate(con: sqlite3.Connection, doc_type: str, on: date) -> str:
     fmt = get_format(con, doc_type)
     period = fmt.period(on)
     con.execute("INSERT OR IGNORE INTO number_range(doc_type, period, last_value) VALUES (?,?,0)", (rng, period))
-    nxt = _last(con, rng, period) + 1
-    # Sicherheitsnetz: falls die Nummer (z.B. durch Import oder ein früheres Schema) schon existiert, weiterzählen
-    while con.execute("SELECT 1 FROM document WHERE number=?", (fmt.render(on, nxt),)).fetchone():
-        nxt += 1
+    nxt = _next_free(con, rng, fmt, on)
     con.execute("UPDATE number_range SET last_value=? WHERE doc_type=? AND period=?", (nxt, rng, period))
     return fmt.render(on, nxt)
 
@@ -159,8 +200,10 @@ def reserve(con: sqlite3.Connection, doc_type: str, number: str) -> bool:
 
 
 def last_value(con: sqlite3.Connection, doc_type: str, on: date) -> int:
-    """Zuletzt vergebener Zähler im Zeitraum von `on` (nach eingestelltem Schema)."""
-    return _last(con, RANGE_FOR_TYPE[doc_type], get_format(con, doc_type).period(on))
+    """Zuletzt vergebener Zähler im Zeitraum von `on` (nach eingestelltem Schema, inkl. vorhandener Belege)."""
+    rng, fmt = RANGE_FOR_TYPE[doc_type], get_format(con, doc_type)
+    period = fmt.period(on)
+    return max(_last(con, rng, period), _highest_existing(con, rng, fmt, period))
 
 
 def set_start(con: sqlite3.Connection, doc_type: str, on: date, last_value: int) -> None:
