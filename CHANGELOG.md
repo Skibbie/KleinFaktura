@@ -5,6 +5,8 @@ automatisch als Beschreibung übernommen. Neue Einträge zuerst unter `## [Unver
 
 ## [Unveröffentlicht]
 
+## [2.5.0] – 2026-11-28
+
 - Platzhalter: beim Tippen von „{“ öffnet sich eine Auswahlliste (Belegtexte, Textbausteine, E-Mail-Vorlagen) –
   im Beleg mit dem aktuellen Wert; Knopf „Platzhalter…“ zeigt eine Übersicht aller Platzhalter mit Erklärung
   und fügt den gewählten an der Cursorposition ein
