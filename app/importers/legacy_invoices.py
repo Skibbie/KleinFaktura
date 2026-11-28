@@ -424,11 +424,18 @@ def check_collisions(con: sqlite3.Connection, inv: ParsedInvoice, number: str | 
                                            f"({documents.DOC_TYPE_LABEL[ex['doc_type']]} vom {ex['doc_date']}, "
                                            f"{ex['total_gross_cents'] / 100:.2f} €).".replace(".", ",", 1), dict(ex)))
         if not numbering.parse_number(con, number, doc_type):
-            out.append(Collision("number_format", f"Die Nummer {number} entspricht nicht dem Schema "
-                                                  f"{'ANJJJJ-MMNN' if doc_type == 'angebot' else 'JJJJ-MMNN'}."))
+            out.append(Collision("number_format", f"Die Nummer {number} entspricht nicht dem aktuellen Schema "
+                                                  f"{numbering.get_format(con, doc_type).pattern()} (Einstellungen → "
+                                                  "Nummernkreise). Stammt sie aus einem früheren Schema, kann sie "
+                                                  "trotzdem so übernommen werden."))
     else:
         out.append(Collision("number_format", "Keine Belegnummer angegeben."))
     return out
+
+
+def base_number(number: str) -> str:
+    """Nummer ohne Dubletten-Vermerk „-D1“, „-D2“ … – nur am Ende, ein Präfix wie „RE-D“ bleibt unberührt."""
+    return re.sub(r"-D\d+$", "", number)
 
 
 def suggest_duplicate_number(con: sqlite3.Connection, number: str) -> str:
@@ -482,7 +489,7 @@ def import_parsed(con: sqlite3.Connection, inv: ParsedInvoice, *, number: str, d
                 (number, str(target), inv.sha256, note, dumps(recipient), dumps(company(con)),
                  str(target) if target.suffix.lower() == ".pdf" else None,
                  inv.sha256 if target.suffix.lower() == ".pdf" else None, doc_id))
-            numbering.reserve(con, doc_type, number.split("-D")[0] if "-D" in number else number)
+            numbering.reserve(con, doc_type, base_number(number))
             audit.log(con, "import", "document", doc_id, {"number": number, "file": inv.path.name, "sha256": inv.sha256,
                                                           "gross": totals["gross"], "note": note})
             if paid and doc_type == "rechnung" and totals["gross"] > 0:

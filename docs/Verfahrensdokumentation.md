@@ -25,9 +25,13 @@
 
 ## 2. Anwenderdokumentation (Ablauf)
 1. **Kunde anlegen** – manuell oder per Import (CSV/Excel; im Profil Energieberatung auch aus Hottgenroth, nur lesender Zugriff).
-2. **Angebot** (optional) – Nummernkreis `ANJJJJ-MMNN`.
+2. **Angebot** (optional) – eigener Nummernkreis, Standard `ANJJJJ-MMNN`.
 3. **Rechnung erstellen** – Entwurf ohne Nummer; Entwürfe sind änderbar und löschbar.
-4. **Festschreiben** – vergibt die fortlaufende Nummer `JJJJ-MMNN` (Zähler je Monat), prüft die
+4. **Festschreiben** – vergibt die fortlaufende Nummer, Standard `JJJJ-MMNN` (Zähler je Monat). Das Schema
+   (Präfix, Jahr 4-/2-stellig oder ohne, Monat, Trennzeichen, Stellen) ist unter Einstellungen → Steuer und Belege →
+   Nummernkreise einstellbar; Änderungen werden protokolliert, gelten nur für künftig festgeschriebene Belege und
+   können keine bereits vergebene Nummer erneut erzeugen. Der Zähler beginnt je Monat, je Jahr oder nie neu und
+   kann nicht zurückgesetzt werden. Danach prüft das Festschreiben die
    Pflichtangaben nach § 14 UStG, erzeugt das PDF (optional mit ZUGFeRD-XML) und speichert dessen SHA-256-Prüfsumme.
    Ab diesem Zeitpunkt lässt sich der Beleg im Programm nicht mehr ändern oder löschen (siehe Abschnitt 3 zur
    Schutzwirkung).

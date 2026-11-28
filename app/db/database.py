@@ -86,8 +86,16 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "offer.valid_days": "30",
     "invoice.girocode": "1",
     "invoice.zugferd_default": "0",
+    # Nummernkreise (Baukasten): Präfix + Jahr (4/2/0 Stellen) + Trennzeichen + Monat (1/0) + Zähler.
+    # Stellen je Kreis (number.invoice_digits/offer_digits) fehlen hier bewusst: ohne Wert gilt number.digits weiter.
     "number.invoice_prefix": "",
+    "number.invoice_year": "4",
+    "number.invoice_month": "1",
+    "number.invoice_sep": "-",
     "number.offer_prefix": "AN",
+    "number.offer_year": "4",
+    "number.offer_month": "1",
+    "number.offer_sep": "-",
     "number.digits": "2",
     # Mahnwesen
     "dunning.fee_1": "0",

@@ -88,7 +88,143 @@ def test_numbering_reserve_and_no_reset(con):
         assert numbering.allocate(con, "rechnung", date(2026, 9, 30)) == "2026-0903"
     with pytest.raises(sqlite3.IntegrityError):
         with transaction(con):
-            numbering.set_start(con, "rechnung", 2026, 9, 1)
+            numbering.set_start(con, "rechnung", date(2026, 9, 1), 1)
+
+
+def _set_format(con, doc_type, **kw):
+    from app.db.database import set_setting
+    from app.services import numbering
+    fmt = numbering.NumberFormat(**kw)
+    for k, v in numbering.format_values(fmt).items():
+        set_setting(con, numbering.setting_keys(numbering.RANGE_FOR_TYPE[doc_type])[k], v)
+    return fmt
+
+
+def test_numbering_custom_formats(con):
+    from app.db.database import transaction
+    from app.services import numbering
+    # Standard entspricht dem bisherigen Schema
+    assert numbering.get_format(con, "rechnung") == numbering.NumberFormat(digits=2)
+    assert numbering.get_format(con, "angebot").pattern() == "ANJJJJ-MMNN"
+    # jährlicher Zähler mit Präfix und 4 Stellen
+    _set_format(con, "rechnung", prefix="RE-", year=4, month=False, sep="-", digits=4)
+    with transaction(con):
+        assert numbering.allocate(con, "rechnung", date(2026, 3, 1)) == "RE-2026-0001"
+        assert numbering.allocate(con, "storno", date(2026, 11, 1)) == "RE-2026-0002"   # kein Neustart je Monat
+        assert numbering.allocate(con, "rechnung", date(2027, 1, 2)) == "RE-2027-0001"
+    assert numbering.peek_next(con, "rechnung", date(2026, 12, 1)) == "RE-2026-0003"
+    assert numbering.parse_number(con, "RE-2026-0007", "rechnung") == ("2026", 7)
+    assert numbering.parse_number(con, "2026-1101", "rechnung") is None
+    # fortlaufend ohne Jahr, 6 Stellen
+    _set_format(con, "angebot", prefix="A", year=0, month=False, sep="", digits=6)
+    with transaction(con):
+        assert numbering.allocate(con, "angebot", date(2026, 12, 31)) == "A000001"
+        assert numbering.allocate(con, "angebot", date(2027, 1, 1)) == "A000002"
+        assert numbering.reserve(con, "angebot", "A000010")
+        assert numbering.allocate(con, "angebot", date(2027, 1, 1)) == "A000011"
+    # 2-stelliges Jahr mit Monat, ohne Trennzeichen
+    _set_format(con, "rechnung", prefix="", year=2, month=True, sep="", digits=3)
+    assert numbering.peek_next(con, "rechnung", date(2026, 11, 5)) == "2611001"
+    assert numbering.parse_number(con, "2611042", "rechnung") == ("202611", 42)
+    with transaction(con):
+        numbering.set_start(con, "rechnung", date(2026, 11, 1), 41)
+    assert numbering.peek_next(con, "rechnung", date(2026, 11, 5)) == "2611042"
+
+
+def test_numbering_format_validation_and_collisions(con):
+    from app.db.database import set_setting, transaction
+    from app.services import numbering
+    for bad in [{"prefix": "RE/"}, {"prefix": "X" * 11}, {"year": 0, "month": True}, {"sep": "/"}, {"digits": 9},
+                {"year": 3}]:
+        with pytest.raises(ValueError):
+            numbering.NumberFormat(**bad)
+    set_setting(con, "number.invoice_sep", "/")            # beschädigt -> bewährtes Standardschema
+    assert numbering.get_format(con, "rechnung").pattern() == "JJJJ-MMNN"
+    # Schemawechsel: eine unter dem alten Schema vergebene, gleich lautende Nummer wird übersprungen
+    from app.services import documents
+    _set_format(con, "rechnung", prefix="", year=4, month=True, sep="-", digits=2)
+    inv = documents.finalize(con, _invoice(con, _customer(con), on="2026-01-05"), pdf_writer=_fake_pdf)
+    assert inv["number"] == "2026-0101"
+    _set_format(con, "rechnung", prefix="", year=4, month=False, sep="-", digits=4)
+    with transaction(con):
+        numbering.set_start(con, "rechnung", date(2026, 1, 1), 100)
+        assert numbering.allocate(con, "rechnung", date(2026, 1, 6)) == "2026-0102"
+
+
+def test_numbering_scheme_change_continues_above_existing(con):
+    """Nach einem Wechsel der Zählweise setzt der Zähler oberhalb vorhandener Nummern fort (keine Rückwärtsfolge),
+    und die Vorschau nennt genau die Nummer, die vergeben wird."""
+    from app.db.database import transaction
+    from app.services import documents, numbering
+    cid = _customer(con)
+    for day in ("2026-11-02", "2026-11-03", "2026-11-04"):
+        documents.finalize(con, _invoice(con, cid, on=day), pdf_writer=_fake_pdf)
+    _set_format(con, "rechnung", prefix="", year=4, month=False, sep="-", digits=4)   # je Jahr
+    assert numbering.last_value(con, "rechnung", date(2026, 11, 20)) == 1103
+    nxt = numbering.peek_next(con, "rechnung", date(2026, 11, 20))
+    assert nxt == "2026-1104"
+    with transaction(con):
+        assert numbering.allocate(con, "rechnung", date(2026, 11, 20)) == nxt
+    # Vorschau überspringt wie die Vergabe vorhandene Nummern
+    _set_format(con, "rechnung", prefix="", year=4, month=True, sep="-", digits=2)
+    documents.finalize(con, _invoice(con, cid, on="2026-12-01"), pdf_writer=_fake_pdf)   # 2026-1201
+    _set_format(con, "rechnung", prefix="", year=4, month=False, sep="-", digits=4)
+    nxt = numbering.peek_next(con, "rechnung", date(2026, 12, 20))
+    with transaction(con):
+        assert numbering.allocate(con, "rechnung", date(2026, 12, 20)) == nxt == "2026-1202"
+
+
+def test_numbering_stored_format_error_and_prefix(con):
+    from app.db.database import set_setting
+    from app.services import numbering
+    assert numbering.format_error(con, "rechnung") is None
+    with pytest.raises(ValueError):
+        numbering.NumberFormat(prefix="RE\n")            # kein Zeilenumbruch am Ende (fullmatch)
+    set_setting(con, "number.invoice_year", "0")           # Monat ohne Jahr: ungültig
+    assert "Monat" in numbering.format_error(con, "rechnung")
+    assert numbering.get_format(con, "rechnung").pattern() == "JJJJ-MMNN"
+    set_setting(con, "number.invoice_prefix", "RE\n")
+    assert numbering.get_format(con, "rechnung").prefix == ""
+
+
+def test_legacy_base_number():
+    from app.importers.legacy_invoices import base_number
+    assert base_number("2026-1101-D2") == "2026-1101"
+    assert base_number("RE-D2026-0001") == "RE-D2026-0001"     # Präfix mit „-D“ bleibt
+    assert base_number("RE-D2026-0001-D1") == "RE-D2026-0001"
+
+
+def test_numbering_legacy_digits_setting(con):
+    from app.db.database import set_setting
+    from app.services import numbering
+    set_setting(con, "number.digits", "3")
+    assert numbering.peek_next(con, "rechnung", date(2026, 10, 1)) == "2026-10001"
+
+
+def test_set_default_text(con):
+    from app.db import repo
+    from app.services import documents
+    cid = _customer(con)
+    # vorhandener Baustein wird Standard, kein Duplikat
+    body = repo.list_textblocks(con, "kopf_rechnung")[0]["body"]
+    n = len(repo.list_textblocks(con))
+    assert repo.set_default_text(con, "kopf_rechnung", "  " + body.upper() + " ")
+    assert len(repo.list_textblocks(con)) == n
+    # neuer Text wird angelegt und ist danach der einzige Standard
+    assert repo.set_default_text(con, "kopf_rechnung", "Neue Einleitung")
+    defaults = [t["body"] for t in repo.list_textblocks(con, "kopf_rechnung") if t["is_default"]]
+    assert defaults == ["Neue Einleitung"]
+    assert documents.new_draft(con, "rechnung", cid)["header_text"] == "Neue Einleitung"
+    assert not repo.set_default_text(con, "anrede", "   ")
+    # Schlusstext aus dem Editor enthält die Grußformel: abtrennen, damit sie nicht doppelt erscheint
+    gruss = repo.default_text(con, "gruss")
+    assert repo.set_default_text(con, "fuss_rechnung", "Danke!\n\n" + gruss)
+    assert repo.default_text(con, "fuss_rechnung") == "Danke!"
+    footer = documents.new_draft(con, "rechnung", cid)["footer_text"]
+    assert footer.count(gruss.strip()) == 1 and footer.startswith("Danke!")
+    # Grußformel mitten im Text (z.B. mit Nachsatz) bleibt stehen und wird nicht noch einmal angehängt
+    assert repo.set_default_text(con, "fuss_angebot", "Bis bald.\n\n" + gruss + "\nPS: Termin folgt")
+    assert documents.new_draft(con, "angebot", cid)["footer_text"].count(gruss.strip()) == 1
 
 
 def test_no_number_for_drafts_and_no_gaps(con):
@@ -608,3 +744,24 @@ def test_mail_compose_and_export(con, tmp_path, monkeypatch):
     assert mail.export_copy(con, doc) == target
     set_setting(con, "pdf.export_year_dirs", "0")
     assert mail.export_copy(con, doc) == out / Path(doc["pdf_path"]).name
+
+
+def test_placeholder_catalog_matches_values(con, monkeypatch):
+    """Vorschlagliste und Übersicht zeigen genau die Platzhalter, die beim Erstellen auch ersetzt werden."""
+    from app.services import documents, mail, payments, placeholder_catalog as pc
+    names = lambda ctx: {p.name for p in pc.for_context(ctx)}   # noqa: E731
+    inv = documents.finalize(con, _invoice(con, _customer(con)), pdf_writer=_fake_pdf)
+    assert set(documents.placeholders(con, inv)) == names("beleg") - {"betreff", "belegart"}
+    seen = []
+    real_render = documents.render
+    monkeypatch.setattr(documents, "render", lambda text, values: seen.append(set(values)) or real_render(text, values))
+    payments.create_dunning(con, inv["id"], level=1, pdf_writer=lambda data, path: Path(path).write_bytes(b"%PDF"))
+    assert seen and seen[0] == names("mahnung")
+    seen.clear()
+    monkeypatch.setattr(mail, "render", lambda text, values: seen.append(set(values)) or real_render(text, values))
+    mail.mail_texts(con, inv)
+    assert seen[0] == names("mail")
+    # Kategorien: Mahnung mit Zusatzwerten, Fahrt-Anlass ohne Ersetzung, unbekannt = alle
+    assert {p.name for p in pc.for_category("mahnung2")} == names("mahnung")
+    assert pc.for_category("fahrt_anlass") == [] and len(pc.for_category(None)) == len(pc.PLACEHOLDERS)
+    assert len({p.name for p in pc.PLACEHOLDERS}) == len(pc.PLACEHOLDERS)

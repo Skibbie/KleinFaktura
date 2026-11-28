@@ -24,13 +24,16 @@ def send_mail(parent, ctx: Ctx, doc: dict) -> None:
                                                   "Empfänger in Thunderbird eintragen.")
 
 
-def ask_send_after_finalize(parent, text: str) -> bool:
-    """Erfolgsmeldung nach dem Festschreiben mit Wahl „Per E-Mail senden“ oder „PDF öffnen“."""
+def ask_after_finalize(parent, text: str) -> str | None:
+    """Erfolgsmeldung nach dem Festschreiben. Rückgabe: "mail", "pdf" oder None (Schließen, X, Escape)."""
     box = QMessageBox(QMessageBox.Information, "Festgeschrieben", text, parent=parent)
     mail_btn = box.addButton("Per E-Mail senden…", QMessageBox.ActionRole)
-    box.addButton("PDF öffnen", QMessageBox.AcceptRole)
+    pdf_btn = box.addButton("PDF öffnen", QMessageBox.AcceptRole)
+    # ohne Abbrechen-Knopf sperrt Qt das Schließen per X und Escape
+    box.setEscapeButton(box.addButton("Schließen", QMessageBox.RejectRole))
+    box.setDefaultButton(pdf_btn)
     box.exec()
-    return box.clickedButton() is mail_btn
+    return {mail_btn: "mail", pdf_btn: "pdf"}.get(box.clickedButton())
 
 
 def export_after_finalize(parent, ctx: Ctx, doc: dict) -> str:

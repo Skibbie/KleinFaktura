@@ -25,7 +25,7 @@ def gui(tmp_path, monkeypatch):
     monkeypatch.setattr(QInputDialog, "getItem", staticmethod(lambda p, t, l, items, cur=0, *a, **k: (items[cur], True)))
     monkeypatch.setattr(os, "startfile", lambda *a, **k: None, raising=False)
     from app.ui import editor as _editor
-    monkeypatch.setattr(_editor, "ask_send_after_finalize", lambda p, text: log.append(("information", text)) or False)
+    monkeypatch.setattr(_editor, "ask_after_finalize", lambda p, text: log.append(("information", text)) or "pdf")
     from app.services import mail as _mail
     monkeypatch.setattr(_mail, "_launch", lambda args: log.append(("mail", args)))
     from app.db import database
@@ -648,3 +648,219 @@ def test_settings_reject_invalid_numbers(gui):
     assert sp.save(quiet=True) is True
     assert get_setting(ctx.con, "ku.limit_prev") == "25000,00" and get_setting(ctx.con, "dunning.fee_2") == "5,50"
     assert get_setting(ctx.con, "invoice.payment_days") == "21" and sp._snapshot() == sp._clean
+
+
+def test_settings_number_format_builder(gui):
+    app, ctx, log, mp, tmp = gui
+    from datetime import date
+    from app.db.database import get_setting
+    from app.services import numbering
+    from app.ui.settings_page import SettingsPage
+    sp = SettingsPage(ctx)
+    box = sp.nr_formats["rechnung"]
+    assert "Schema JJJJ-MMNN" in box.preview.text() and "jeden Monat" in box.preview.text()
+    box.prefix.setText("RE-")
+    box.month.setChecked(False)
+    box.digits.setValue(4)
+    assert f"RE-{date.today().year}-0001" in box.preview.text() and "jedes Jahr" in box.preview.text()
+    assert sp._snapshot() != sp._clean
+    # Startwert erst nach dem Speichern des Schemas
+    sp.set_start()
+    assert "zuerst die Einstellungen speichern" in log[-1][1]
+    # ohne Jahr: Monat und Trennzeichen gesperrt
+    box.year.setCurrentIndex(box.year.findData(0))
+    assert not box.month.isEnabled() and not box.month.isChecked() and not box.sep.isEnabled()
+    assert "fortlaufend" in box.preview.text()
+    box.year.setCurrentIndex(box.year.findData(4))
+    # ungültiges Präfix: Vorschau zeigt den Fehler, Speichern wird abgelehnt
+    box.prefix.setText("RE/")
+    assert "Präfix" in box.preview.text()
+    assert sp.save(quiet=True) is False and "Nummernkreis Rechnungen" in log[-1][1]
+    box.prefix.setText("RE-")
+    assert sp.save(quiet=True) is True and sp._snapshot() == sp._clean
+    assert get_setting(ctx.con, "number.invoice_prefix") == "RE-" and get_setting(ctx.con, "number.invoice_month") == "0"
+    assert numbering.peek_next(ctx.con, "rechnung", date(2030, 6, 1)) == "RE-2030-0001"
+    assert numbering.peek_next(ctx.con, "angebot", date(2030, 6, 1)) == "AN2030-0601"   # Angebote unverändert
+    # Startwert gilt jetzt für das ganze Jahr; Monatsfeld ist gesperrt
+    assert sp.nr_month.isHidden() and not sp.nr_year.isHidden()
+    sp.nr_type.setCurrentIndex(sp.nr_type.findData("angebot"))
+    assert not sp.nr_month.isHidden()                                # Angebote: weiter monatlich
+    sp.nr_type.setCurrentIndex(sp.nr_type.findData("rechnung"))
+    sp.nr_year.setValue(2030); sp.nr_last.setValue(41)
+    sp.set_start()
+    assert numbering.peek_next(ctx.con, "rechnung", date(2030, 12, 1)) == "RE-2030-0042"
+    sp.nr_last.setValue(5)
+    sp.set_start()
+    assert "nicht verringert" in log[-1][1]
+
+
+def test_editor_set_as_default(gui):
+    app, ctx, log, mp, tmp = gui
+    from app.db import repo
+    from app.services import documents
+    from app.ui.editor import DocumentEditor
+    from app.ui.main_window import MainWindow
+    win = MainWindow(ctx)
+    win._skip_backup = True
+    cid = repo.save_customer(ctx.con, {"first_name": "Max", "last_name": "Muster", "street": "Weg 1", "zip": "11111",
+                                       "city": "Ort"})
+    ed = DocumentEditor(win, ctx, doc_type="angebot", customer_id=cid)
+    assert not ed.header.as_default.isChecked() and not ed.desc.as_default.isVisibleTo(ed)
+    assert ed.header.as_default.isVisibleTo(ed) and ed.footer.as_default.isVisibleTo(ed)
+    ed.header.setText("Meine neue Angebotseinleitung")
+    ed.header.as_default.setChecked(True)
+    ed.header.remember.setChecked(False)          # Standard legt den Baustein trotzdem an
+    ed.footer.setText("Bis bald!\n\n" + repo.default_text(ctx.con, "gruss"))
+    ed.footer.as_default.setChecked(True)
+    assert ed.save(quiet=True)
+    assert not ed.header.as_default.isChecked()   # einmalige Aktion
+    assert repo.default_text(ctx.con, "kopf_angebot") == "Meine neue Angebotseinleitung"
+    assert repo.default_text(ctx.con, "fuss_angebot") == "Bis bald!"
+    d = documents.new_draft(ctx.con, "angebot", cid)
+    assert d["header_text"] == "Meine neue Angebotseinleitung"
+    assert d["footer_text"].count("Mit freundlichen Grüßen") == 1
+    # Rechnungen behalten ihren Standard
+    assert documents.new_draft(ctx.con, "rechnung", cid)["header_text"] != "Meine neue Angebotseinleitung"
+    # Rückmeldung: Erfolg beim normalen Speichern, Hinweis bei leerem Text
+    log.clear()
+    ed.notes.setText("Hinweis für alle")
+    ed.notes.as_default.setChecked(True)
+    ed.salutation.setText("")
+    ed.salutation.as_default.setChecked(True)
+    assert ed.save()
+    texts = [t for kind, t in log if kind == "information"]
+    assert any("Hinweise" in t and "Standard" in t for t in texts)
+    assert any("Leerer Text" in t and "Anrede" in t for t in texts)
+    assert not ed.salutation.as_default.isChecked()
+    ed.reject()
+
+
+def test_placeholder_popup_stays_on_screen_and_closes_on_move(gui):
+    app, ctx, log, mp, tmp = gui
+    from PySide6.QtWidgets import QPlainTextEdit, QVBoxLayout, QWidget
+    from app.services import placeholder_catalog as pc
+    from app.ui import placeholders_ui
+    win = QWidget()
+    edit = QPlainTextEdit()
+    QVBoxLayout(win).addWidget(edit)
+    avail = win.screen().availableGeometry()
+    win.setGeometry(avail.right() - 150, avail.bottom() - 60, 140, 50)   # rechts unten am Rand
+    win.show()
+    app.processEvents()
+    mp.setattr(QPlainTextEdit, "hasFocus", lambda self: True)
+    calls = []
+    c = placeholders_ui.attach(edit, lambda: pc.for_context("beleg"), lambda: calls.append(1) or {})
+    edit.insertPlainText("{")
+    assert c.is_open()
+    assert avail.contains(c.popup.frameGeometry()) or avail.contains(c.popup.geometry())
+    edit.insertPlainText("d")
+    edit.insertPlainText("a")
+    assert len(calls) == 1                      # Werte nur einmal je Öffnen
+    win.move(win.x() - 20, win.y() - 20)
+    app.processEvents()
+    assert not c.is_open()
+    win.close()
+
+
+def test_settings_shows_broken_number_format(gui):
+    app, ctx, log, mp, tmp = gui
+    from app.db.database import set_setting
+    from app.ui.settings_page import SettingsPage
+    set_setting(ctx.con, "number.invoice_sep", "/")
+    sp = SettingsPage(ctx)
+    box = sp.nr_formats["rechnung"]
+    assert not box.stored_error.isHidden() and "ungültig" in box.stored_error.text()
+    assert sp.nr_formats["angebot"].stored_error.isHidden()
+
+
+def _key(widget, key, text=""):
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QApplication
+    QApplication.sendEvent(widget, QKeyEvent(QEvent.KeyPress, key, Qt.NoModifier, text))
+
+
+def test_placeholder_completer_and_overview(gui):
+    app, ctx, log, mp, tmp = gui
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QLineEdit, QPlainTextEdit
+    from app.db import repo
+    from app.services import placeholder_catalog as pc
+    from app.ui import placeholders_ui
+    from app.ui.editor import DocumentEditor
+    from app.ui.main_window import MainWindow
+    from app.ui.texts_page import TextblockTab
+
+    edit = QPlainTextEdit()
+    edit.show()
+    edit.setFocus()
+    app.processEvents()
+    mp.setattr(QPlainTextEdit, "hasFocus", lambda self: True)   # offscreen hat kein aktives Fenster
+    c = placeholders_ui.attach(edit, lambda: pc.for_context("beleg"), lambda: {"datum": "28.11.2026"})
+    edit.insertPlainText("Rechnung vom {dat")
+    assert c.is_open()
+    shown = [c.popup.item(i).data(Qt.UserRole) for i in range(c.popup.count())]
+    assert shown[0] == "datum" and set(shown) == {"datum", "leistungsdatum", "ref_datum"}   # Anfang zuerst
+    assert "(28.11.2026)" in c.popup.item(0).text()                                           # aktueller Wert
+    _key(edit, Qt.Key_Down)
+    assert c.popup.currentRow() == 1
+    _key(edit, Qt.Key_Up)
+    _key(edit, Qt.Key_Return)                     # übernimmt, ohne Zeilenumbruch
+    assert edit.toPlainText() == "Rechnung vom {datum}" and not c.is_open()
+    edit.insertPlainText(" {xyz")                 # nichts passt: keine Liste
+    assert not c.is_open()
+    edit.insertPlainText(" {")
+    assert c.is_open() and c.popup.count() == len(pc.for_context("beleg"))
+    _key(edit, Qt.Key_Escape)
+    assert not c.is_open() and edit.toPlainText().endswith(" {")
+    _key(edit, Qt.Key_Return, "\r")               # Liste zu: Enter wirkt normal
+    assert edit.toPlainText().endswith("{\n")
+
+    # Einzeiliges Feld (Mail-Betreff)
+    line = QLineEdit()
+    mp.setattr(QLineEdit, "hasFocus", lambda self: True)
+    lc = placeholders_ui.attach(line, lambda: pc.for_context("mail"))
+    line.setText("{bel")
+    line.textEdited.emit(line.text())
+    assert {lc.popup.item(i).data(Qt.UserRole) for i in range(lc.popup.count())} == {"belegnr", "belegart", "ref_belegnr"}
+    lc.popup.setCurrentRow([lc.popup.item(i).data(Qt.UserRole) for i in range(lc.popup.count())].index("belegart"))
+    _key(line, Qt.Key_Tab)
+    assert line.text() == "{belegart}"
+
+    # Übersicht: Suche und Einfügen an der Cursorposition
+    target = QPlainTextEdit()
+    target.setPlainText("Fällig am ")
+    target.moveCursor(target.textCursor().MoveOperation.End)
+    dlg = placeholders_ui.PlaceholderDialog(None, pc.for_context("mahnung"), target, {"faellig": "12.12.2026"})
+    dlg.search.setText("frist")
+    visible = [r for r in range(dlg.table.rowCount()) if not dlg.table.isRowHidden(r)]
+    assert [dlg.table.item(r, 0).text() for r in visible] == ["{neu_faellig}"]
+    dlg.table.selectRow(visible[0])
+    dlg.insert()
+    assert target.toPlainText() == "Fällig am {neu_faellig}"
+
+    # Textbausteine: Liste je Kategorie, Fahrt-Anlass ohne Platzhalter
+    tt = TextblockTab(ctx)
+    tt.category.setCurrentIndex(tt.category.findData("mahnung1"))
+    assert any(p.name == "gebuehr" for p in tt._placeholders()) and tt.ph_button.isEnabled()
+    tt.category.setCurrentIndex(tt.category.findData("fahrt_anlass"))
+    assert tt._placeholders() == [] and not tt.ph_button.isEnabled() and "keine Platzhalter" in tt.ph_hint.text()
+
+    # Beleg-Editor: Werte des aktuellen Belegs, Einfügen ins zuletzt benutzte Feld
+    win = MainWindow(ctx)
+    win._skip_backup = True
+    cid = repo.save_customer(ctx.con, {"first_name": "Max", "last_name": "Muster", "street": "Weg 1", "zip": "11111",
+                                       "city": "Ort"})
+    ed = DocumentEditor(win, ctx, doc_type="rechnung", customer_id=cid)
+    ed.table.item(0, 0).setText("Beratung"); ed.table.item(0, 3).setText("80,00")
+    values = ed._placeholder_values()
+    assert values["kunde"] == "Max Muster" and values["betrag"].startswith("80,00")
+    assert values["belegnr"].startswith("voraussichtlich ")
+    assert hasattr(ed.footer.edit, "_placeholder_completer")
+    ed._remember_text_edit(ed.notes.edit)
+    mp.setattr(placeholders_ui.PlaceholderDialog, "exec", lambda self: (self.table.selectRow(0), self.insert()))
+    ed.notes.setText("")
+    ed.show_placeholders()
+    assert ed.notes.text() == pc.PLACEHOLDERS[0].token
+    ed.mark_clean()                               # sonst wartet die Rückfrage „Speichern?“
+    ed.reject()
